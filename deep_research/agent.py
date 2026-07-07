@@ -527,7 +527,13 @@ class ResearchAgent:
             messages.append(
                 {"role": "user", "content": "Provide your final report now, as plain text, no more tool calls."}
             )
-            response = self.llm.call(system=self.system_prompt, messages=messages, tools=[])
+            # tools=_UTILITY_TOOLS, not tools=[]: Sarvam's API rejects any request whose
+            # conversation history contains tool-role messages (which this one does, from
+            # every search already made) if the request itself declares no tools at all -
+            # "Tool messages found but no tools provided" - whereas DeepSeek tolerates it.
+            # Keeping a non-empty tools list here satisfies that check on both providers; the
+            # "no more tool calls" instruction above is what actually stops further calls.
+            response = self.llm.call(system=self.system_prompt, messages=messages, tools=_UTILITY_TOOLS)
             message = response.choices[0].message
 
         if response.choices[0].finish_reason == "length":
@@ -546,7 +552,9 @@ class ResearchAgent:
                     "it unfinished.",
                 }
             )
-            response = self.llm.call(system=self.system_prompt, messages=messages, tools=[])
+            # Same reason as the tools=_UTILITY_TOOLS call above: this conversation already
+            # has tool-role messages in it, and Sarvam 400s on tools=[] in that situation.
+            response = self.llm.call(system=self.system_prompt, messages=messages, tools=_UTILITY_TOOLS)
             message = response.choices[0].message
             if response.choices[0].finish_reason == "length":
                 trace.append({"warning": "retry also cut off at max_tokens - using it anyway"})
