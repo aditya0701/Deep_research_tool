@@ -5,10 +5,12 @@ and Chainlit already owns it (`chainlit.server.app`, a real FastAPI instance) - 
 module adds one route onto that same app instead of standing up a second process that
 would need its own port HF Spaces has no way to expose.
 
-Two modes are wired up: concise_mode (a short, cited answer) and plain ask mode (the full
-research report, e.g. for a caller that wants the whole write-up rather than a distilled
-conclusion). Article mode isn't exposed here - it takes a full article body as input and
-produces a Hindi article for a person to read, which fits the chat UI, not a scripted caller.
+Three modes are wired up: concise_mode (a short, cited answer - the model self-classifies
+each question as simple/ambiguous/complex and only does full research for genuinely complex
+ones), plain ask mode (the full research report on any question, for a caller that wants the
+whole write-up rather than a distilled conclusion), and article mode (given an article's
+title/body, researches what's genuinely missing from it and optionally writes the Hindi
+article - the same job the Chainlit "Research an article"/"Write an article" profiles do).
 
 Protected by a shared-secret header rather than left open, because a public Space with an
 unauthenticated POST route is an unauthenticated way for anyone on the internet to spend
@@ -20,6 +22,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from .agent import ResearchAgent
+from .article_mode import research_article
 from .concise_mode import answer_concisely
 
 router = APIRouter()
@@ -91,3 +94,40 @@ def research_endpoint(body: ResearchRequest, x_api_key: str | None = Header(defa
     _check_api_key(x_api_key)
     result = ResearchAgent().run(body.question)
     return ResearchResponse(report=result["report"], sources=result["sources"])
+
+
+class ArticleRequest(BaseModel):
+    title: str
+    body: str
+    # Defaults to True to match article_mode.research_article's own default (mirrors the
+    # Chainlit "Write an article" profile) - set false for just the English research
+    # findings, matching the "Research an article" profile instead.
+    write_hindi: bool = True
+
+
+class ArticleResponse(BaseModel):
+    title: str
+    report: str
+    hindi_article: str | None = None
+    flagged_claims: list[str]
+    iterations_used: int
+    sources: list[str]
+
+
+@router.post("/api/article", response_model=ArticleResponse)
+def article_endpoint(body: ArticleRequest, x_api_key: str | None = Header(default=None)) -> ArticleResponse:
+    """Article mode: given an article's title and full body text, finds what's genuinely
+    missing from it, researches those gaps in one session, and (unless write_hindi=false)
+    weaves the original article and the new findings into one Hindi-language article -
+    exactly what the Chainlit "Research an article"/"Write an article" profiles do, just
+    reachable over plain HTTP instead of the chat UI."""
+    _check_api_key(x_api_key)
+    result = research_article(body.title, body.body, write_hindi=body.write_hindi)
+    return ArticleResponse(
+        title=result["title"],
+        report=result["report"],
+        hindi_article=result.get("hindi_article"),
+        flagged_claims=result["flagged_claims"],
+        iterations_used=result["iterations_used"],
+        sources=result["sources"],
+    )

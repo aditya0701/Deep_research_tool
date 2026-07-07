@@ -256,4 +256,5 @@ def research_article(
         "flagged_claims": result["flagged_claims"],
         "iterations_used": result["iterations_used"],
         "trace": result["trace"],
+        "sources": result["sources"],
     }
