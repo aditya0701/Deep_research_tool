@@ -64,6 +64,74 @@ core facts plus the genuinely new context/angles from the enrichment report.
 
 Output ONLY the final Hindi article as plain text: first line is the headline, then a blank line,
 then the article body. No JSON, no markdown formatting, no preamble or meta-commentary.
+
+## Editorial Quality (Very Important)
+
+Write like a senior technology journalist editing for an elite Hindi technology newspaper.
+
+Do NOT merely summarize the source. Produce a polished, publication-ready news article.
+
+Follow these editorial principles:
+
+- Report facts first; interpretation second.
+- Maintain a neutral, evidence-based tone.
+- Attribute opinions and judgments to their source (e.g., "Sysdig के अनुसार...", "शोधकर्ताओं का कहना है..."). Do not present opinions as facts.
+- Never exaggerate capabilities or significance beyond what the source supports.
+- Preserve important nuances. If the source mentions limitations, human involvement, uncertainty, or caveats, include them.
+- Prefer precise statements over dramatic language.
+
+Writing style:
+- Read like a professionally edited newspaper article, not an AI summary or technical documentation.
+- Use varied sentence structures and natural transitions.
+- Avoid repetitive constructions such as "इसके बाद... इसके बाद... इसके बाद..."
+- Avoid filler adjectives like "बहुत ही", "बेहद", "चौंकाने वाला", "क्रांतिकारी", unless directly supported by the source.
+- Show significance through facts rather than emotional wording.
+
+Paragraph quality:
+- Every paragraph should introduce a new idea.
+- Remove redundant explanations.
+- If a paragraph does not improve the reader's understanding, omit it.
+- Keep paragraphs concise (3–6 sentences).
+
+Technical writing:
+- Explain technical concepts only when necessary for understanding the news.
+- Do not overload the article with implementation details.
+- Retain only details that help explain how the attack worked or why it matters.
+
+Before finalizing, silently verify:
+✓ No factual exaggeration.
+✓ No unsupported conclusions.
+✓ Proper attribution for all opinions.
+✓ No repeated ideas.
+✓ Professional newspaper tone throughout.
+Do not convert uncertainty into certainty.
+
+If the source says:
+- "according to"
+- "researchers believe"
+- "appears to"
+- "may"
+- "suggests"
+
+preserve that level of certainty in the article.
+
+Do not strengthen claims unless the source explicitly does so.
+
+Think like an editor, not a researcher.
+
+Your goal is not to include every fact you know.
+
+Your goal is to publish the article that an experienced technology editor would approve.
+
+If two paragraphs communicate the same idea, keep the stronger one.
+
+If a technical detail does not improve the reader's understanding of the news, remove it.
+
+Every paragraph must answer at least one of these questions:
+1. What happened?
+2. How did it happen?
+3. Why is it important?
+4. What should readers understand from this?
 """
 
 
@@ -78,21 +146,27 @@ def write_hindi_article(title: str, body: str, enrichment_report: str, llm_clien
 
 
 def research_article(
-    title: str, body: str, max_iterations: int = 12, on_step=None, write_hindi: bool = True
+    title: str,
+    body: str,
+    max_iterations: int = 12,
+    on_step=None,
+    write_hindi: bool = True,
+    llm_client: LLMClient | None = None,
 ) -> dict:
     """One continuous research session over the whole article, not a dossier of
     independently-researched questions. Followed by a separate, non-agentic writing pass
     (no tools, no search budget) that turns the English enrichment report into a final Hindi
     article - kept as its own LLM call rather than folded into the research loop, since writing
     prose is a different job from deciding what to research next."""
+    llm_client = llm_client or LLMClient()
     agent = ResearchAgent(
-        llm_client=LLMClient(),
+        llm_client=llm_client,
         max_iterations=max_iterations,
         system_prompt=ENRICHMENT_SYSTEM_PROMPT,
     )
     task = f"Title: {title}\n\nArticle text:\n{body}"
     result = agent.run(task, on_step=on_step)
-    hindi_article = write_hindi_article(title, body, result["report"]) if write_hindi else None
+    hindi_article = write_hindi_article(title, body, result["report"], llm_client=llm_client) if write_hindi else None
     return {
         "title": title,
         "report": result["report"],

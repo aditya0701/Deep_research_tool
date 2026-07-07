@@ -11,12 +11,16 @@ Run with: chainlit run app.py -w
 import asyncio
 
 import chainlit as cl
+from chainlit.input_widget import Select
 
 from deep_research.agent import ResearchAgent
 from deep_research.article_mode import research_article
+from deep_research.llm_client import DEFAULT_PROVIDER, LLMClient
 
 ASK_PROFILE = "Ask a question"
 ARTICLE_PROFILE = "Research an article"
+WRITE_ARTICLE_PROFILE = "Write an article"
+_ARTICLE_PROFILES = (ARTICLE_PROFILE, WRITE_ARTICLE_PROFILE)
 _DONE = object()
 
 
@@ -35,7 +39,15 @@ async def chat_profiles():
             name=ARTICLE_PROFILE,
             markdown_description=(
                 "Paste an article and the agent finds what's genuinely missing from it and "
-                "researches those gaps in one session."
+                "researches those gaps in one session, then hands you the raw research "
+                "findings - no article is written."
+            ),
+        ),
+        cl.ChatProfile(
+            name=WRITE_ARTICLE_PROFILE,
+            markdown_description=(
+                "Paste an article and the agent researches what's missing, then weaves the "
+                "original article and the new findings into one complete Hindi-language article."
             ),
         ),
     ]
@@ -44,7 +56,18 @@ async def chat_profiles():
 @cl.on_chat_start
 async def on_chat_start():
     profile = cl.user_session.get("chat_profile")
-    if profile == ARTICLE_PROFILE:
+    cl.user_session.set("llm_provider", DEFAULT_PROVIDER)
+    await cl.ChatSettings(
+        [
+            Select(
+                id="llm_provider",
+                label="LLM backend",
+                values=["deepseek", "sarvam"],
+                initial_index=["deepseek", "sarvam"].index(DEFAULT_PROVIDER),
+            )
+        ]
+    ).send()
+    if profile in _ARTICLE_PROFILES:
         await cl.Message(
             content=(
                 "Paste your article as: **first line = title**, then a blank line, then the "
@@ -57,21 +80,45 @@ async def on_chat_start():
         ).send()
 
 
+@cl.on_settings_update
+async def on_settings_update(settings: dict):
+    provider = settings["llm_provider"]
+    cl.user_session.set("llm_provider", provider)
+    await cl.Message(content=f"Switched LLM backend to **{provider}**.").send()
+
+
 @cl.on_message
 async def on_message(message: cl.Message):
     profile = cl.user_session.get("chat_profile")
+    provider = cl.user_session.get("llm_provider") or DEFAULT_PROVIDER
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
     def on_step(step: dict):
         loop.call_soon_threadsafe(queue.put_nowait, step)
 
+    used_backend = {}
+
     def run_blocking():
         try:
-            if profile == ARTICLE_PROFILE:
+            llm_client = LLMClient(provider=provider)
+            used_backend["provider"] = llm_client.provider
+            used_backend["model"] = llm_client.model
+            # Sarvam has taken more iterations than DeepSeek to reach an answer in
+            # side-by-side testing, so give it a fixed 12-turn budget regardless of mode
+            # (ask mode otherwise defaults to 8) rather than letting it run unbounded.
+            max_iterations_kwargs = {"max_iterations": 12} if provider == "sarvam" else {}
+            if profile in _ARTICLE_PROFILES:
                 title, _, body = message.content.partition("\n\n")
-                return research_article(title.strip(), body.strip(), on_step=on_step)
-            agent = ResearchAgent()
+                return research_article(
+                    title.strip(),
+                    body.strip(),
+                    on_step=on_step,
+                    write_hindi=(profile == WRITE_ARTICLE_PROFILE),
+                    llm_client=llm_client,
+                    **max_iterations_kwargs,
+                )
+            agent = ResearchAgent(llm_client=llm_client, **max_iterations_kwargs)
             return agent.run(message.content, on_step=on_step)
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, _DONE)
@@ -91,10 +138,12 @@ async def on_message(message: cl.Message):
                 s.output = step.get("result", "")
 
     result = await run_task
-    if profile == ARTICLE_PROFILE and result.get("hindi_article"):
+    if profile == WRITE_ARTICLE_PROFILE and result.get("hindi_article"):
         await cl.Message(content=result["hindi_article"], author="Final Hindi article").send()
         async with cl.Step(name="Enrichment research report (English)", type="tool") as s:
             s.output = result["report"]
+    elif profile == ARTICLE_PROFILE:
+        await cl.Message(content=result["report"], author="Enrichment research report").send()
     else:
         await cl.Message(content=result["report"]).send()
     if result["flagged_claims"]:
@@ -103,3 +152,7 @@ async def on_message(message: cl.Message):
             content=f"**Flagged as unverified against retrieved sources:**\n{flagged}",
             author="Grounding check",
         ).send()
+    await cl.Message(
+        content=f"_Backend used: **{used_backend['provider']}** ({used_backend['model']})_",
+        author="Backend info",
+    ).send()
