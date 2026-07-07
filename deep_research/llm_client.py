@@ -51,7 +51,7 @@ _PROVIDERS = {
     "sarvam": {
         "base_url": "https://api.sarvam.ai/v1",
         "api_key_env": "SARVAM_API_KEY",
-        "default_model": os.environ.get("SARVAM_MODEL", "sarvam-30b"),
+        "default_model": os.environ.get("SARVAM_MODEL", "sarvam-105b"),
         "default_max_tokens": 4096,
     },
 }

@@ -10,6 +10,7 @@ see TechDrishti's runaway-generation history), and running the grounding
 check on the final report before returning it.
 """
 import json
+import re
 
 from .grounding import check_grounding
 from .llm_client import LLMClient
@@ -157,6 +158,79 @@ _EVIDENCE_TOOLS = {"web_search", "news_search", "fetch_page"}
 # because the forced-final call removed every tool indiscriminately.
 _UTILITY_TOOLS = [t for t in TOOLS if t["name"] not in _EVIDENCE_TOOLS]
 
+# Observed live with Sarvam's sarvam-30b: instead of routing a tool call through the
+# API's structured tool_calls field, it occasionally leaks one as raw text in
+# message.content, using a Hermes/Qwen-style <tool_call> block from its own fine-tuning
+# data rather than the schema this agent actually gave it (e.g. tool name "search" with
+# a "numResults" arg, neither of which are ours). DeepSeek's server-side parsing doesn't
+# do this. Without recovering it, message.tool_calls is empty so the loop treats that
+# raw text as the model's finished answer and it leaks verbatim into the final report
+# instead of the search ever actually happening.
+_FALLBACK_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_FALLBACK_ARG_PAIR_RE = re.compile(r"<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>", re.DOTALL)
+_FALLBACK_TOOL_ALIASES = {
+    "search": "web_search",
+    "web_search": "web_search",
+    "websearch": "web_search",
+    "news_search": "news_search",
+    "newssearch": "news_search",
+    "fetch_page": "fetch_page",
+    "fetch": "fetch_page",
+    "get_current_date": "get_current_date",
+    "calculate": "calculate",
+    "calc": "calculate",
+}
+_FALLBACK_ARG_KEYS = {
+    "web_search": ("query", "max_results", "numResults", "num_results"),
+    "news_search": ("query", "max_results", "numResults", "num_results"),
+    "fetch_page": ("url",),
+    "calculate": ("expression",),
+    "get_current_date": (),
+}
+
+
+def _parse_fallback_tool_calls(content: str) -> list[dict] | None:
+    """Best-effort recovery of tool calls a provider leaked as raw text (see note above)
+    instead of returning them in the API's structured tool_calls field. Only keeps
+    arguments our own tool functions actually accept - extra fields the model invented
+    (like "numResults") are dropped rather than passed through and blowing up as a
+    TypeError."""
+    matches = _FALLBACK_TOOL_CALL_RE.findall(content)
+    if not matches:
+        return None
+    calls = []
+    for raw in matches:
+        raw = raw.strip()
+        name, args = None, {}
+        try:
+            parsed = json.loads(raw)
+            name = parsed.get("name")
+            args = dict(parsed.get("arguments") or {})
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            first_line, _, rest = raw.partition("\n")
+            name = first_line.strip()
+            for key, value in _FALLBACK_ARG_PAIR_RE.findall(rest):
+                args[key.strip()] = value.strip()
+        real_name = _FALLBACK_TOOL_ALIASES.get((name or "").strip().lower())
+        if not real_name:
+            continue
+        allowed = _FALLBACK_ARG_KEYS[real_name]
+        clean_args = {k: v for k, v in args.items() if k in allowed}
+        if "query" in allowed and "query" not in clean_args:
+            continue
+        if "url" in allowed and "url" not in clean_args:
+            continue
+        if "expression" in allowed and "expression" not in clean_args:
+            continue
+        for numeric_key in ("max_results", "numResults", "num_results"):
+            if numeric_key in clean_args:
+                try:
+                    clean_args["max_results"] = int(clean_args.pop(numeric_key))
+                except (TypeError, ValueError):
+                    clean_args.pop(numeric_key, None)
+        calls.append({"name": real_name, "arguments": clean_args})
+    return calls or None
+
 
 class ResearchAgent:
     def __init__(
@@ -216,6 +290,49 @@ class ResearchAgent:
             messages.append(message.model_dump(exclude_none=True))
 
             if not message.tool_calls:
+                fallback_calls = _parse_fallback_tool_calls(message.content or "")
+                if fallback_calls:
+                    emit(
+                        {
+                            "iteration": i,
+                            "warning": "provider returned a tool call as raw text instead of a "
+                            "structured tool call - recovered and executed it anyway",
+                        }
+                    )
+                    assistant_msg = messages[-1]
+                    assistant_msg["content"] = (
+                        _FALLBACK_TOOL_CALL_RE.sub("", assistant_msg.get("content") or "").strip() or None
+                    )
+                    synthetic_tool_calls = []
+                    for j, call in enumerate(fallback_calls):
+                        fake_id = f"fallback_{i}_{j}"
+                        synthetic_tool_calls.append(
+                            {
+                                "id": fake_id,
+                                "type": "function",
+                                "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])},
+                            }
+                        )
+                    assistant_msg["tool_calls"] = synthetic_tool_calls
+                    for tc, call in zip(synthetic_tool_calls, fallback_calls):
+                        func = _TOOL_FUNCS.get(call["name"])
+                        try:
+                            result = func(**call["arguments"])
+                        except Exception as e:
+                            result = f"Tool error: {e}"
+                        result_text = result if isinstance(result, str) else json.dumps(result)
+                        if call["name"] in _EVIDENCE_TOOLS:
+                            retrieved_texts.append(result_text)
+                        emit(
+                            {
+                                "iteration": i,
+                                "tool": call["name"],
+                                "input": json.dumps(call["arguments"]),
+                                "result": result_text,
+                            }
+                        )
+                        messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+                    continue
                 return self._finish(question, message.content or "", retrieved_texts, trace, i + 1, forced=False)
 
             for tool_call in message.tool_calls:
