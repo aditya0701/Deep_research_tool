@@ -12,12 +12,23 @@ import asyncio
 
 import chainlit as cl
 from chainlit.input_widget import Select
+from chainlit.server import app as fastapi_app
 
 from deep_research.agent import ResearchAgent
+from deep_research.api import router as concise_api_router
 from deep_research.article_mode import research_article
+from deep_research.concise_mode import answer_concisely
 from deep_research.llm_client import DEFAULT_PROVIDER, LLMClient
 
+# Adds POST /api/concise onto Chainlit's own FastAPI app - Hugging Face Spaces exposes only
+# one port, and Chainlit already owns it, so a plain HTTP caller (GitHub Actions, another
+# model) hits this route directly instead of needing a second port Spaces has no way to
+# expose. Must happen at import time of this module, before Chainlit finishes mounting its
+# catch-all SPA route.
+fastapi_app.include_router(concise_api_router)
+
 ASK_PROFILE = "Ask a question"
+CONCISE_PROFILE = "Quick grounded answer"
 ARTICLE_PROFILE = "Research an article"
 WRITE_ARTICLE_PROFILE = "Write an article"
 _ARTICLE_PROFILES = (ARTICLE_PROFILE, WRITE_ARTICLE_PROFILE)
@@ -34,6 +45,15 @@ async def chat_profiles():
                 "it needs and when to stop."
             ),
             default=True,
+        ),
+        cl.ChatProfile(
+            name=CONCISE_PROFILE,
+            markdown_description=(
+                "Short, fact-grounded answers instead of a full report. Definitions get a "
+                "quick verified answer, ambiguous terms get every plausible meaning plus which "
+                "one fits your context, and genuinely complex questions still get researched in "
+                "full - you just get a grounded conclusion back, not the whole report."
+            ),
         ),
         cl.ChatProfile(
             name=ARTICLE_PROFILE,
@@ -118,6 +138,8 @@ async def on_message(message: cl.Message):
                     llm_client=llm_client,
                     **max_iterations_kwargs,
                 )
+            if profile == CONCISE_PROFILE:
+                return answer_concisely(message.content, on_step=on_step, llm_client=llm_client, **max_iterations_kwargs)
             agent = ResearchAgent(llm_client=llm_client, **max_iterations_kwargs)
             return agent.run(message.content, on_step=on_step)
         finally:
@@ -144,6 +166,11 @@ async def on_message(message: cl.Message):
             s.output = result["report"]
     elif profile == ARTICLE_PROFILE:
         await cl.Message(content=result["report"], author="Enrichment research report").send()
+    elif profile == CONCISE_PROFILE:
+        await cl.Message(content=result["answer"], author=f"Answer ({result['category']})").send()
+        if result.get("research_report"):
+            async with cl.Step(name="Underlying research report", type="tool") as s:
+                s.output = result["research_report"]
     else:
         await cl.Message(content=result["report"]).send()
     if result["flagged_claims"]:

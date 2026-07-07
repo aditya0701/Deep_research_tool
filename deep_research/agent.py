@@ -232,6 +232,22 @@ def _parse_fallback_tool_calls(content: str) -> list[dict] | None:
     return calls or None
 
 
+# Belt-and-suspenders: matches a closed <tool_call>...</tool_call> block (in case one
+# slips through unrecovered, e.g. an unmappable tool name) as well as a dangling,
+# never-closed <tool_call> (a response truncated mid-tag). Applied right before any text
+# is accepted as a final report, in `_finish`, so a leaked tag can never reach the user
+# regardless of which code path produced the text.
+_FALLBACK_DANGLING_TAG_RE = re.compile(r"<tool_call>.*$", re.DOTALL)
+
+
+def _strip_leaked_tool_call_artifacts(text: str) -> str:
+    if not text:
+        return text
+    text = _FALLBACK_TOOL_CALL_RE.sub("", text)
+    text = _FALLBACK_DANGLING_TAG_RE.sub("", text)
+    return text.strip()
+
+
 class ResearchAgent:
     def __init__(
         self,
@@ -395,18 +411,65 @@ class ResearchAgent:
         message = response.choices[0].message
         messages.append(message.model_dump(exclude_none=True))
 
-        if message.tool_calls:
-            for tool_call in message.tool_calls:
-                result_text = self._execute_tool_call(tool_call, retrieved_texts)
-                emit(
-                    {
-                        "iteration": self.max_iterations,
-                        "tool": tool_call.function.name,
-                        "input": tool_call.function.arguments,
-                        "result": result_text,
-                    }
-                )
-                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+        # Mirrors the main loop's structured-tool_calls handling below, plus the same
+        # text-leaked-as-tool_call recovery used there - this forced-budget branch used to
+        # skip that recovery entirely (it only ever checked message.tool_calls), which is
+        # exactly how a leaked <tool_call> reached the displayed enrichment report: article
+        # mode runs a longer budget than ask mode and hits this branch far more often.
+        fallback_calls = None if message.tool_calls else _parse_fallback_tool_calls(message.content or "")
+        if message.tool_calls or fallback_calls:
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    result_text = self._execute_tool_call(tool_call, retrieved_texts)
+                    emit(
+                        {
+                            "iteration": self.max_iterations,
+                            "tool": tool_call.function.name,
+                            "input": tool_call.function.arguments,
+                            "result": result_text,
+                        }
+                    )
+                    messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+            else:
+                assistant_msg = messages[-1]
+                leftover = _FALLBACK_TOOL_CALL_RE.sub("", assistant_msg.get("content") or "").strip()
+                if leftover:
+                    emit({"iteration": self.max_iterations, "thinking": leftover})
+                synthetic_tool_calls = []
+                for j, call in enumerate(fallback_calls):
+                    fake_id = f"fallback_final_{j}"
+                    synthetic_tool_calls.append(
+                        {
+                            "id": fake_id,
+                            "type": "function",
+                            "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])},
+                        }
+                    )
+                    if call["name"] in _EVIDENCE_TOOLS:
+                        # Search budget is already exhausted at this point - don't actually
+                        # search, just tell the model that so it writes up what it has.
+                        result_text = (
+                            "Search budget exhausted - no further searching allowed. Write your "
+                            "final report using only what you've already retrieved."
+                        )
+                    else:
+                        func = _TOOL_FUNCS.get(call["name"])
+                        try:
+                            raw_result = func(**call["arguments"])
+                        except Exception as e:
+                            raw_result = f"Tool error: {e}"
+                        result_text = raw_result if isinstance(raw_result, str) else json.dumps(raw_result)
+                    emit(
+                        {
+                            "iteration": self.max_iterations,
+                            "tool": call["name"],
+                            "input": json.dumps(call["arguments"]),
+                            "result": result_text,
+                        }
+                    )
+                    messages.append({"role": "tool", "tool_call_id": fake_id, "content": result_text})
+                assistant_msg["content"] = leftover or None
+                assistant_msg["tool_calls"] = synthetic_tool_calls
             messages.append(
                 {"role": "user", "content": "Provide your final report now, as plain text, no more tool calls."}
             )
@@ -414,12 +477,31 @@ class ResearchAgent:
             message = response.choices[0].message
 
         if response.choices[0].finish_reason == "length":
-            trace.append({"warning": "final report cut off at max_tokens (finish_reason=length)"})
+            # Unlike the main loop, this final step is past the hard search-budget cap - but
+            # that cap is about searching, not about finishing the writeup, so one bounded
+            # retry here doesn't reopen the search budget, it just gives the model one more
+            # shot at a report that fits instead of silently accepting a report that stops
+            # mid-sentence (previously the only outcome here on truncation).
+            trace.append({"warning": "final report cut off at max_tokens (finish_reason=length) - retrying once"})
+            messages.append(message.model_dump(exclude_none=True))
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "That was cut off before finishing. Write a more compact final "
+                    "report that fits within the token limit - trim detail rather than leaving "
+                    "it unfinished.",
+                }
+            )
+            response = self.llm.call(system=self.system_prompt, messages=messages, tools=[])
+            message = response.choices[0].message
+            if response.choices[0].finish_reason == "length":
+                trace.append({"warning": "retry also cut off at max_tokens - using it anyway"})
         final_text = message.content or ""
         return self._finish(question, final_text, retrieved_texts, trace, self.max_iterations, forced=True)
 
     @staticmethod
     def _finish(question, final_text, retrieved_texts, trace, iterations_used, forced):
+        final_text = _strip_leaked_tool_call_artifacts(final_text)
         grounded_report, dropped = check_grounding(final_text, retrieved_texts)
         trace.append({"action": "forced_final_answer" if forced else "final_answer"})
         return {

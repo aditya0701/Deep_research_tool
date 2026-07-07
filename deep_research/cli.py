@@ -10,6 +10,7 @@ import sys
 
 from .agent import ResearchAgent
 from .article_mode import research_article
+from .concise_mode import answer_concisely
 
 # Windows consoles default stdout to the system codepage (cp1252), which can't encode
 # Hindi/CJK/most non-Latin output - reconfigure explicitly rather than relying on
@@ -29,10 +30,17 @@ def main():
     article.add_argument("title")
     article.add_argument("body_file", help="Path to a text file containing the article body")
 
+    concise = sub.add_parser(
+        "concise", help="Mode 3: short, fact-grounded answer (also callable by another model)"
+    )
+    concise.add_argument("question")
+
     args = parser.parse_args()
 
     if args.mode == "ask":
         result = ResearchAgent().run(args.question)
+    elif args.mode == "concise":
+        result = answer_concisely(args.question)
     else:
         with open(args.body_file, encoding="utf-8") as f:
             body = f.read()

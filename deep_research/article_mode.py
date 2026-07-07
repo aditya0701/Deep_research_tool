@@ -33,8 +33,10 @@ your research surfaces it as genuinely relevant.
 
 {CORE_RULES}
 When you are done researching, respond with a single consolidated enrichment report: the
-angles you investigated and what you found for each, organized with clear sections and inline
-source URLs. This report is meant to help write a more comprehensive version of the article.
+angles you investigated and what you found for each, with inline source URLs. This report is
+read only by another AI model in the next step (which turns it into the actual article), never
+directly by a person - so skip headers, bullet points, bold text, or any other visual
+formatting. Plain prose covering each angle and its findings is all that's needed.
 """
 
 
@@ -132,6 +134,86 @@ Every paragraph must answer at least one of these questions:
 2. How did it happen?
 3. Why is it important?
 4. What should readers understand from this?
+
+## Article Length and Section Structure
+
+The final output should be a publication-ready technology news article, not a research report or technical whitepaper.
+
+Follow this approximate structure:
+
+1. मुख्य अवधारणा (Key Concept)
+- Length: 40–60 words.
+- Give a quick explanation of the central news point.
+- Do not repeat the introduction.
+- Focus on why the reader should care.
+
+2. Intro
+- Length: 80–120 words.
+- Establish the news immediately.
+- Answer:
+  - What happened?
+  - Who reported it?
+  - Why is it significant?
+- Do not include deep technical details here.
+
+3. Main Article
+- Length: 500–700 words.
+- This is the primary reporting section.
+- Include:
+  - Core discovery or announcement.
+  - Important technical details needed to understand the event.
+  - How the incident happened.
+  - Evidence supporting the claims.
+  - Important caveats or limitations.
+  - Why the event matters.
+
+For cybersecurity stories, prioritize:
+  - Attack chain.
+  - Vulnerability or technique used.
+  - Impact.
+  - Level of autonomy.
+  - Human involvement (if any).
+
+Avoid unnecessary technical implementation details unless they directly improve reader understanding.
+
+4. विश्लेषण (Analysis)
+- Length: 200–350 words.
+- This section should provide editorial value, not repeat the article.
+- Clearly separate analysis from reported facts.
+- Discuss:
+  - Broader industry implications.
+  - Whether the event represents a genuine shift or only an incremental change.
+  - Limitations of the technology.
+  - Future impact.
+
+Do not introduce speculation as fact.
+Use phrases such as:
+  - "यह संकेत देता है..."
+  - "विशेषज्ञों के अनुसार..."
+  - "इसका संभावित प्रभाव..."
+
+5. निष्कर्ष
+- Length: 50–80 words.
+- Summarize the key takeaway.
+- Do not repeat the introduction.
+- End with the broader significance of the story.
+
+## Overall Length Rules
+
+Target total length:
+900–1200 words.
+
+Maximum length:
+1400 words.
+
+If the article exceeds the limit:
+- Remove secondary background information first.
+- Remove repeated explanations.
+- Remove low-value technical details.
+- Never remove the core facts, caveats, or important context.
+
+Remember:
+A shorter article with carefully selected information is better than a longer article containing every available detail.
 """
 
 
