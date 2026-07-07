@@ -91,7 +91,12 @@ async def on_message(message: cl.Message):
                 s.output = step.get("result", "")
 
     result = await run_task
-    await cl.Message(content=result["report"]).send()
+    if profile == ARTICLE_PROFILE and result.get("hindi_article"):
+        await cl.Message(content=result["hindi_article"], author="Final Hindi article").send()
+        async with cl.Step(name="Enrichment research report (English)", type="tool") as s:
+            s.output = result["report"]
+    else:
+        await cl.Message(content=result["report"]).send()
     if result["flagged_claims"]:
         flagged = "\n".join(f"- {c}" for c in result["flagged_claims"])
         await cl.Message(

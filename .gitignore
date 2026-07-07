@@ -7,3 +7,4 @@ chainlit.log
 output.txt
 .venv/
 venv/
+.continueignore.env

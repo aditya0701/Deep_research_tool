@@ -6,9 +6,16 @@ Usage:
 """
 import argparse
 import json
+import sys
 
 from .agent import ResearchAgent
 from .article_mode import research_article
+
+# Windows consoles default stdout to the system codepage (cp1252), which can't encode
+# Hindi/CJK/most non-Latin output - reconfigure explicitly rather than relying on
+# PYTHONIOENCODING being set in the environment.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def main():

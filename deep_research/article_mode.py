@@ -38,9 +38,53 @@ source URLs. This report is meant to help write a more comprehensive version of 
 """
 
 
-def research_article(title: str, body: str, max_iterations: int = 12, on_step=None) -> dict:
+HINDI_WRITER_SYSTEM_PROMPT = """You are a Hindi writer for a tech journalism outlet. You will be
+given the original article's title and body, plus an enrichment research report containing
+additional facts, context, and angles a researcher found that the original article was missing.
+
+Your job: write ONE comprehensive Hindi-language article that weaves the original article's own
+content together with the new research findings into a single coherent piece - not two sections
+stapled together, not a "here's what's new" appendix. A reader should not be able to tell it was
+built from two sources.
+
+Language rules (follow exactly):
+- Every sentence must be in Hindi - verb, conjunction, adjective all Hindi. Do not mix in English
+  verbs or conjunctions.
+  CORRECT: "स्वायत्त एजेंट (Autonomous Agent) एक सरल निर्णय-चक्र पर काम करते हैं।"
+  WRONG: "Individual agents बहुत simple हैं और एक loop follow करते हैं।"
+- Technical terms: Devanagari first, original English in parentheses on first use - मेमोरी स्टोर
+  (Memory Store). Company/product/person names stay in Latin script (OpenAI, Claude, GPT-5.5).
+- Hedge predictions and unconfirmed claims: हो सकता है, संभावना है - never state speculation as fact.
+- Do not invent facts - use only what's in the original article or the enrichment report. If a
+  sentence in the enrichment report is marked "[UNVERIFIED: ...]", either omit that claim or state
+  it explicitly as unconfirmed - never present it as settled fact.
+
+Write a full, substantial article - multiple paragraphs, not a summary. Cover the original story's
+core facts plus the genuinely new context/angles from the enrichment report.
+
+Output ONLY the final Hindi article as plain text: first line is the headline, then a blank line,
+then the article body. No JSON, no markdown formatting, no preamble or meta-commentary.
+"""
+
+
+def write_hindi_article(title: str, body: str, enrichment_report: str, llm_client: LLMClient | None = None) -> str:
+    llm = llm_client or LLMClient()
+    task = (
+        f"Original article title: {title}\n\nOriginal article body:\n{body}\n\n"
+        f"--- Enrichment research report ---\n{enrichment_report}"
+    )
+    response = llm.call(system=HINDI_WRITER_SYSTEM_PROMPT, messages=[{"role": "user", "content": task}], tools=[])
+    return response.choices[0].message.content or ""
+
+
+def research_article(
+    title: str, body: str, max_iterations: int = 12, on_step=None, write_hindi: bool = True
+) -> dict:
     """One continuous research session over the whole article, not a dossier of
-    independently-researched questions."""
+    independently-researched questions. Followed by a separate, non-agentic writing pass
+    (no tools, no search budget) that turns the English enrichment report into a final Hindi
+    article - kept as its own LLM call rather than folded into the research loop, since writing
+    prose is a different job from deciding what to research next."""
     agent = ResearchAgent(
         llm_client=LLMClient(),
         max_iterations=max_iterations,
@@ -48,9 +92,11 @@ def research_article(title: str, body: str, max_iterations: int = 12, on_step=No
     )
     task = f"Title: {title}\n\nArticle text:\n{body}"
     result = agent.run(task, on_step=on_step)
+    hindi_article = write_hindi_article(title, body, result["report"]) if write_hindi else None
     return {
         "title": title,
         "report": result["report"],
+        "hindi_article": hindi_article,
         "flagged_claims": result["flagged_claims"],
         "iterations_used": result["iterations_used"],
         "trace": result["trace"],

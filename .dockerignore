@@ -11,3 +11,5 @@ prev_project_context/
 tests/
 scripts/
 search_enforcement_explainer.html
+.continueignore
+
