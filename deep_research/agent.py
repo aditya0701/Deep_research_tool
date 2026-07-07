@@ -291,6 +291,33 @@ class ResearchAgent:
 
             if not message.tool_calls:
                 fallback_calls = _parse_fallback_tool_calls(message.content or "")
+                if not fallback_calls and finish_reason == "length":
+                    # The response was cut off by max_tokens before finishing - possibly
+                    # mid-way through a leaked <tool_call> block (no closing tag left to
+                    # match on), possibly mid-sentence in what was meant to be the real
+                    # final report. Either way this text is not a genuine, complete answer
+                    # and must not be accepted as one (that's exactly how a truncated
+                    # "search" fragment or a cut-off enrichment report used to leak through
+                    # as the final displayed result). Ask for a fresh, shorter attempt
+                    # instead, spending one more iteration rather than trusting a fragment.
+                    emit(
+                        {
+                            "iteration": i,
+                            "warning": "response was truncated by max_tokens with no usable tool "
+                            "call - discarding the fragment and asking the model to retry more "
+                            "concisely instead of treating it as a final answer",
+                        }
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "Your previous response was cut off before it finished (hit "
+                            "the token limit). Continue from where you left off, but be more "
+                            "concise - either make one tool call, or if you were writing your "
+                            "final report, write a more compact version that fits.",
+                        }
+                    )
+                    continue
                 if fallback_calls:
                     emit(
                         {
@@ -300,9 +327,15 @@ class ResearchAgent:
                         }
                     )
                     assistant_msg = messages[-1]
-                    assistant_msg["content"] = (
-                        _FALLBACK_TOOL_CALL_RE.sub("", assistant_msg.get("content") or "").strip() or None
-                    )
+                    leftover = _FALLBACK_TOOL_CALL_RE.sub("", assistant_msg.get("content") or "").strip()
+                    if leftover:
+                        # The model folded its reasoning into `content` instead of the
+                        # dedicated reasoning_content field this turn (observed: only the
+                        # first turn reliably uses that field) - surface it as a thinking
+                        # step instead of silently dropping it when the tag is stripped out,
+                        # which previously made every turn after the first look thinking-less.
+                        emit({"iteration": i, "thinking": leftover})
+                    assistant_msg["content"] = leftover or None
                     synthetic_tool_calls = []
                     for j, call in enumerate(fallback_calls):
                         fake_id = f"fallback_{i}_{j}"
