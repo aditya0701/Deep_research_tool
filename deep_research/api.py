@@ -36,6 +36,11 @@ class ConciseResponse(BaseModel):
     research_report: str | None = None
     flagged_claims: list[str]
     iterations_used: int
+    # Every URL actually retrieved via a tool call during research (see
+    # agent.extract_sources) - reconstructed from the trace independent of whatever
+    # citation style the model's own answer text used, so a caller has something concrete
+    # to resolve claims against even if the model's inline citations are inconsistent.
+    sources: list[str]
 
 
 def _check_api_key(x_api_key: str | None) -> None:
@@ -63,6 +68,7 @@ def concise_endpoint(body: ConciseRequest, x_api_key: str | None = Header(defaul
         research_report=result.get("research_report"),
         flagged_claims=result["flagged_claims"],
         iterations_used=result["iterations_used"],
+        sources=result["sources"],
     )
 
 
@@ -72,14 +78,16 @@ class ResearchRequest(BaseModel):
 
 class ResearchResponse(BaseModel):
     report: str
+    sources: list[str]
 
 
 @router.post("/api/research", response_model=ResearchResponse)
 def research_endpoint(body: ResearchRequest, x_api_key: str | None = Header(default=None)) -> ResearchResponse:
     """Plain ask mode (the full report), for a caller that wants the whole write-up rather
-    than concise_mode's distilled conclusion. Only the report text is returned - not
-    flagged_claims, trace, or iteration count - since a scripted caller asked for "just the
-    final report", not the internals a person debugging the agent in the chat UI would want."""
+    than concise_mode's distilled conclusion. Only the report text plus its source list are
+    returned - not flagged_claims, trace, or iteration count - since a scripted caller asked
+    for "just the final report", not the internals a person debugging the agent in the chat
+    UI would want."""
     _check_api_key(x_api_key)
     result = ResearchAgent().run(body.question)
-    return ResearchResponse(report=result["report"])
+    return ResearchResponse(report=result["report"], sources=result["sources"])

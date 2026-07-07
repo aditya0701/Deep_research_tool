@@ -88,8 +88,15 @@ URLs. You have no search tools; you may only use what is written in the report.
 Your job: write a short, direct conclusion that actually answers the original question - the
 answer itself, not a summary of the research process. State the conclusion plainly, and back
 up every factual claim in it with the specific fact(s) from the report that support it, inline
-- e.g. "X is cheaper than Y (the report puts X at $10/month against Y's $15/month)." A reader
-should be able to see, for every claim in your conclusion, exactly what fact grounds it.
+- e.g. "X is cheaper than Y (the report puts X at $10/month against Y's $15/month, per
+https://example.com/pricing)." A reader should be able to see, for every claim in your
+conclusion, exactly what fact grounds it - and where that fact came from.
+
+Preserve the report's source URLs verbatim when you cite them - copy the actual URL, don't
+paraphrase or drop it. Never invent a bracketed reference number like [1] or [2] in place of a
+URL, even if the report itself used one: your conclusion is often read with no separate
+numbered source list attached, so a bracket marker with nothing to resolve it against is
+functionally an uncited claim.
 
 Do not introduce any claim that isn't traceable to the report. If the report marks something
 "[UNVERIFIED: ...]" or otherwise flags it as unconfirmed, carry that uncertainty into your
@@ -135,6 +142,7 @@ def answer_concisely(
         "category": _CATEGORY_NAMES[tag],
         "iterations_used": result["iterations_used"],
         "trace": result["trace"],
+        "sources": result["sources"],
     }
 
     if tag == COMPLEX_TAG:

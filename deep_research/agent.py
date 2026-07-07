@@ -51,6 +51,12 @@ CORE_RULES = """Rules learned from a prior project's failures - follow them exac
    comparison target is unclear.
 3. Every factual claim in your final report must be traceable to something you actually
    retrieved via a tool call in this conversation. Do not state a fact you did not retrieve.
+   Cite by writing the actual source URL inline, next to the claim it supports (e.g. "...
+   according to https://example.com/article"). Never cite with a bracketed reference number
+   like [1] or [2] - whatever reads your final answer next (a person or another model/API
+   response) often receives only this text, with no separate numbered source list attached to
+   resolve those markers against. A bracket citation with nothing to point to is exactly as
+   unverifiable as no citation at all.
 4. You have a limited number of tool calls. Prioritize the highest-value searches first, and
    stop searching once you have enough to answer confidently rather than exhausting every
    possible angle.
@@ -246,6 +252,54 @@ def _strip_leaked_tool_call_artifacts(text: str) -> str:
     text = _FALLBACK_TOOL_CALL_RE.sub("", text)
     text = _FALLBACK_DANGLING_TAG_RE.sub("", text)
     return text.strip()
+
+
+def extract_sources(trace: list[dict]) -> list[str]:
+    """Pulls every URL actually retrieved via web_search/news_search/fetch_page out of the
+    trace, independent of whatever citation style the model's own final text used. Exists
+    because CORE_RULES telling the model "cite with real URLs, not bracket numbers" is a
+    prompt instruction, not a code-enforced one - a caller that needs a resolvable source
+    list (an API response consumed by another program, not read as prose by a person) can't
+    rely on the model always complying, so this reconstructs the list directly from what was
+    genuinely fetched rather than trusting the model's own citations."""
+    urls: list[str] = []
+    seen = set()
+
+    def _add(url):
+        if url and url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    for step in trace:
+        tool = step.get("tool")
+        if tool in ("web_search", "news_search"):
+            try:
+                items = json.loads(step.get("result", ""))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    _add(item.get("url"))
+        elif tool == "fetch_page":
+            # fetch_page returns plain page text on success, or a JSON dict with an "error"
+            # key on failure (see tools.py) - only a successful fetch is genuine evidence, so
+            # a failed one must not be listed as a source just because the URL was attempted.
+            result = step.get("result", "")
+            try:
+                parsed = json.loads(result)
+                failed = isinstance(parsed, dict) and "error" in parsed
+            except (json.JSONDecodeError, TypeError):
+                failed = False
+            if failed:
+                continue
+            try:
+                args = json.loads(step.get("input", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            _add(args.get("url"))
+    return urls
 
 
 class ResearchAgent:
@@ -510,4 +564,5 @@ class ResearchAgent:
             "flagged_claims": dropped,
             "iterations_used": iterations_used,
             "trace": trace,
+            "sources": extract_sources(trace),
         }
