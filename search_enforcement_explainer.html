@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Research Agent — How It Works</title>
+<style>
+  :root {
+    --ink: #12161d;
+    --surface: #1b212b;
+    --surface-2: #212836;
+    --hairline: #2a323f;
+    --paper: #e9e6df;
+    --muted: #8993a4;
+    --amber: #d98a3d;
+    --amber-soft: #d98a3d22;
+    --teal: #4fb0ac;
+    --teal-soft: #4fb0ac22;
+    --flag: #d9614f;
+    --flag-soft: #d9614f1c;
+    --good: #4fb0ac;
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ink: #eef1f4;
+      --surface: #ffffff;
+      --surface-2: #f7f9fb;
+      --hairline: #d7dde3;
+      --paper: #1b212b;
+      --muted: #5b6472;
+      --amber: #b8660f;
+      --amber-soft: #b8660f1a;
+      --teal: #2f8f8b;
+      --teal-soft: #2f8f8b1a;
+      --flag: #b8483a;
+      --flag-soft: #b8483a14;
+      --good: #2f8f8b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: inherit; }
+
+  .layout {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ---- sidebar / wiki nav ---- */
+
+  .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--hairline);
+    padding: 2rem 1.2rem;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-title {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin: 0 0 1.2rem;
+  }
+
+  .nav-group {
+    margin-bottom: 1.6rem;
+  }
+
+  .nav-group-label {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.5rem;
+    padding-left: 0.7rem;
+  }
+
+  .nav-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .nav-link {
+    display: block;
+    text-decoration: none;
+    font-size: 0.9rem;
+    color: var(--muted);
+    padding: 0.45rem 0.7rem;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    transition: none;
+  }
+
+  .nav-link:hover {
+    background: var(--surface);
+    color: var(--paper);
+  }
+
+  .nav-link.active {
+    background: var(--amber-soft);
+    color: var(--amber);
+    border-left: 2px solid var(--amber);
+    font-weight: 600;
+  }
+
+  /* ---- content ---- */
+
+  .content {
+    flex: 1;
+    min-width: 0;
+    padding: 3rem 2.5rem 6rem;
+  }
+
+  .content-inner {
+    max-width: 760px;
+  }
+
+  .wide .content-inner {
+    max-width: 900px;
+  }
+
+  .page-section { display: none; }
+  .page-section.visible { display: block; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    display: block;
+    margin-bottom: 0.7rem;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 2.1rem;
+    line-height: 1.15;
+    margin: 0 0 0.9rem;
+    text-wrap: balance;
+  }
+
+  .dek {
+    font-size: 1.05rem;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 2.2rem;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 2.2rem 0 0.5rem;
+  }
+
+  h2:first-of-type { margin-top: 0; }
+
+  .section-sub {
+    color: var(--muted);
+    font-size: 0.95rem;
+    margin: 0 0 1.2rem;
+    max-width: 62ch;
+  }
+
+  p { margin: 0 0 1rem; }
+  p:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    color: var(--teal);
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 1.5rem;
+    overflow-x: auto;
+    margin-bottom: 1.4rem;
+  }
+
+  /* ---- rule cards ---- */
+
+  .rule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.9rem;
+  }
+
+  .rule-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--teal);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+  }
+
+  .rule-card .rule-num {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--teal);
+    letter-spacing: 0.05em;
+  }
+
+  .rule-card .rule-title {
+    display: block;
+    font-weight: 600;
+    margin: 0.25rem 0 0.4rem;
+  }
+
+  .rule-card .rule-desc {
+    font-size: 0.87rem;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+
+  .rule-card .rule-governs {
+    margin-top: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--amber);
+  }
+
+  /* ---- turn decision diagram ---- */
+
+  .turn-flow {
+    display: flex;
+    flex-direction: column;
+    min-width: 460px;
+  }
+
+  .turn-node {
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--teal);
+    border-radius: 6px;
+    padding: 0.7rem 0.9rem;
+    background: var(--surface-2);
+    font-size: 0.9rem;
+  }
+
+  .turn-node .t {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.2rem;
+    font-size: 0.87rem;
+  }
+
+  .turn-node .d { color: var(--muted); font-size: 0.82rem; }
+
+  .turn-connector {
+    display: flex;
+    padding: 0.35rem 0 0.35rem 0.4rem;
+  }
+
+  .turn-connector::before {
+    content: "↓";
+    font-family: var(--font-mono);
+    color: var(--hairline);
+    font-size: 1rem;
+  }
+
+  .turn-branch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+  }
+
+  .turn-branch-box {
+    border-radius: 6px;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--hairline);
+  }
+
+  .turn-branch-box.go {
+    border-left: 3px solid var(--amber);
+    background: var(--amber-soft);
+  }
+
+  .turn-branch-box.stop {
+    border-left: 3px solid var(--good);
+    background: var(--teal-soft);
+  }
+
+  .turn-branch-box .t {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  .loop-back {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0 0.2rem 0.4rem;
+  }
+
+  .loop-back::before {
+    content: "↻";
+    font-family: var(--font-mono);
+    color: var(--amber);
+    font-size: 1rem;
+  }
+
+  .loop-back-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--amber);
+  }
+
+  /* ---- iteration meter ---- */
+
+  .meter {
+    display: flex;
+    gap: 0.4rem;
+    min-width: 560px;
+  }
+
+  .meter-step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .meter-box {
+    width: 100%;
+    height: 3rem;
+    border-radius: 6px;
+    background: var(--teal-soft);
+    border: 1px solid var(--teal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--teal);
+  }
+
+  .meter-step.locked .meter-box {
+    background: var(--flag-soft);
+    border: 1px dashed var(--flag);
+    color: var(--flag);
+  }
+
+  .meter-label {
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.35;
+  }
+
+  .meter-caption {
+    margin-top: 1.2rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+
+  /* ---- generic flow (grounding check) ---- */
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    min-width: 460px;
+  }
+
+  .flow-node {
+    padding: 0.5rem 0;
+  }
+
+  .flow-box {
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--teal);
+    border-radius: 6px;
+    padding: 0.65rem 0.9rem;
+    background: var(--surface-2);
+    font-size: 0.9rem;
+  }
+
+  .flow-box .t {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.15rem;
+    font-size: 0.87rem;
+  }
+
+  .flow-box .d { color: var(--muted); font-size: 0.82rem; }
+
+  .flow-connector {
+    display: flex;
+    padding-left: 0.4rem;
+  }
+
+  .flow-connector::before {
+    content: "↓";
+    font-family: var(--font-mono);
+    color: var(--hairline);
+    font-size: 1rem;
+  }
+
+  .branch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+    margin-top: 0.3rem;
+  }
+
+  .branch-box {
+    border-radius: 6px;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.87rem;
+    border: 1px solid var(--hairline);
+  }
+
+  .branch-box.pass { border-left: 3px solid var(--good); background: var(--teal-soft); }
+  .branch-box.fail { border-left: 3px solid var(--flag); background: var(--flag-soft); }
+
+  .branch-box .t {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+
+  /* ---- trace example ---- */
+
+  .trace-line {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: 5px;
+    margin-bottom: 0.4rem;
+    border-left: 3px solid var(--hairline);
+    background: var(--surface-2);
+  }
+
+  .trace-line.thinking { border-left-color: var(--amber); color: var(--paper); }
+  .trace-line.tool { border-left-color: var(--teal); color: var(--paper); }
+  .trace-line .k { color: var(--muted); }
+
+  /* ---- code blocks ---- */
+
+  .code-block {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    white-space: pre;
+    margin-bottom: 1rem;
+  }
+
+  .code-block .cm { color: var(--muted); font-style: italic; }
+  .code-block .kw { color: var(--teal); }
+  .code-block .fn { color: var(--amber); }
+  .code-block .str { color: var(--good); }
+
+  .code-caption {
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin: -0.6rem 0 1.2rem;
+  }
+
+  .fact-callout {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    background: var(--teal-soft);
+    border: 1px solid var(--good);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    font-size: 0.88rem;
+    margin-bottom: 1.4rem;
+  }
+
+  .fact-callout .fc-tag {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--good);
+    flex-shrink: 0;
+    padding-top: 0.1rem;
+  }
+
+  .illustrative-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px dashed var(--hairline);
+    padding: 0.15rem 0.5rem;
+    border-radius: 99px;
+    margin-bottom: 0.9rem;
+  }
+
+  /* ---- table ---- */
+
+  .table-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 480px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.8rem;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+  }
+
+  th {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .status-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 99px;
+    white-space: nowrap;
+  }
+
+  .status-pill.ok { background: var(--teal-soft); color: var(--good); border: 1px solid var(--good); }
+  .status-pill.missing { background: var(--flag-soft); color: var(--flag); border: 1px solid var(--flag); }
+  .status-pill.notbuilt { background: var(--surface-2); color: var(--muted); border: 1px dashed var(--hairline); }
+
+  .note {
+    margin-top: 1.4rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+    border-top: 1px solid var(--hairline);
+    padding-top: 1rem;
+  }
+
+  .note strong { color: var(--paper); }
+
+  @media (max-width: 860px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--hairline); }
+    .content { padding: 2rem 1.2rem 4rem; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <nav class="sidebar">
+    <p class="sidebar-title">deep_research/ — wiki</p>
+    <div class="nav-group">
+      <p class="nav-group-label">Start here</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" data-target="overview" href="#overview">Overview</a></li>
+      </ul>
+    </div>
+    <div class="nav-group">
+      <p class="nav-group-label">How research happens</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" data-target="search-calling" href="#search-calling">Search query calling</a></li>
+        <li><a class="nav-link" data-target="think-vs-fetch" href="#think-vs-fetch">Thinking vs. fetching</a></li>
+        <li><a class="nav-link" data-target="search-budget" href="#search-budget">Search budget enforcement</a></li>
+      </ul>
+    </div>
+    <div class="nav-group">
+      <p class="nav-group-label">Checking the output</p>
+      <ul class="nav-list">
+        <li><a class="nav-link" data-target="grounding-check" href="#grounding-check">Grounding check</a></li>
+        <li><a class="nav-link" data-target="identity-gap" href="#identity-gap">Identity verification (gap)</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="content-inner">
+
+      <!-- OVERVIEW -->
+      <section id="overview" class="page-section">
+        <span class="eyebrow">deep_research/ · wiki</span>
+        <h1>How the Deep Research Agent Works</h1>
+        <p class="dek">
+          Four pages, each about one moving part: when the agent decides to search, what
+          stops it from searching forever, what checks its final report before you see it,
+          and one thing that isn't checked yet.
+        </p>
+        <div class="panel">
+          <p>
+            The short version: on every turn, the model itself decides whether to search again
+            or answer now — that decision is genuinely its own, not scripted. What this project
+            builds is everything around that decision: the tools it's allowed to use, the rules
+            that shape its judgment, a hard cap so it can't search forever, and a check on its
+            final claims before they reach you.
+          </p>
+          <p>
+            Use the left-hand list to jump between topics — this page doesn't need to be read
+            top to bottom.
+          </p>
+        </div>
+      </section>
+
+      <!-- SEARCH QUERY CALLING -->
+      <section id="search-calling" class="page-section wide">
+        <span class="eyebrow">how research happens</span>
+        <h1>Search Query Calling</h1>
+        <p class="dek">
+          When does the agent decide to search, what rules is it following when it does, how
+          does the call actually happen in code, and — the honest question — how sure can you
+          really be that it's making the right call?
+        </p>
+
+        <h2>When does it call a search?</h2>
+        <p class="section-sub">On every single turn, not just the first one. There's no separate "planning phase" — the same decision gets made fresh, turn after turn.</p>
+        <div class="panel">
+          <div class="turn-flow">
+            <div class="turn-node">
+              <span class="t">Model is handed the conversation so far + all 3 tools</span>
+              <span class="d">the same offer every turn: search again, or answer now — nothing forces either choice</span>
+            </div>
+            <div class="turn-connector"></div>
+            <div class="turn-node">
+              <span class="t">It thinks first</span>
+              <span class="d">extended thinking runs before it responds — "what do I know, what's missing, is that missing piece worth a search?"</span>
+            </div>
+            <div class="turn-connector"></div>
+            <div class="turn-branch">
+              <div class="turn-branch-box go"><span class="t">Decides: search</span>emits a tool call naming one tool + its input</div>
+              <div class="turn-branch-box stop"><span class="t">Decides: answer</span>writes the final report as plain text, no tool call</div>
+            </div>
+            <div class="loop-back"><span class="loop-back-label">"search" goes back to the top of this loop — up to the iteration cap</span></div>
+          </div>
+        </div>
+
+        <h2>What rules is it following?</h2>
+        <p class="section-sub">Four rules, shared by every version of this agent (direct questions and article research both use the same ones). Each governs a different part of the decision.</p>
+        <div class="rule-grid">
+          <div class="rule-card">
+            <span class="rule-num">RULE 1</span>
+            <span class="rule-title">Decompose before judging</span>
+            <span class="rule-desc">An interpretive question ("what's the strategic significance of X") gets broken into fact sub-questions first. The judgment itself is never searched for — only written, at the end, from facts actually retrieved.</span>
+            <div class="rule-governs">governs: WHAT it searches for</div>
+          </div>
+          <div class="rule-card">
+            <span class="rule-num">RULE 2</span>
+            <span class="rule-title">Verify before comparing</span>
+            <span class="rule-desc">Before comparing X to Y, confirm they're genuinely the same kind of thing — and if unsure what X or Y even is, search to check rather than guess from memory.</span>
+            <div class="rule-governs">governs: WHETHER a comparison is even valid</div>
+          </div>
+          <div class="rule-card">
+            <span class="rule-num">RULE 3</span>
+            <span class="rule-title">Every claim must trace to a search</span>
+            <span class="rule-desc">If it wasn't retrieved during this conversation, it can't be stated as fact. This implicitly pushes it to search for anything it isn't already holding real evidence for.</span>
+            <div class="rule-governs">governs: WHETHER to search at all before asserting</div>
+          </div>
+          <div class="rule-card">
+            <span class="rule-num">RULE 4</span>
+            <span class="rule-title">Budget awareness</span>
+            <span class="rule-desc">Prioritize the highest-value searches first, and stop once confident rather than exhausting every possible angle.</span>
+            <div class="rule-governs">governs: WHEN to stop searching</div>
+          </div>
+        </div>
+
+        <h2>How does the call actually happen, mechanically?</h2>
+        <div class="panel">
+          <p>Three tools are described to the model up front — a name, a plain-language description, and the shape of the input it needs to provide:</p>
+          <div class="trace-line tool"><span class="k">web_search(query)</span> — general search; description tells it to phrase queries as atomic facts, not compound questions</div>
+          <div class="trace-line tool"><span class="k">news_search(query)</span> — recency-sensitive coverage</div>
+          <div class="trace-line tool"><span class="k">fetch_page(url)</span> — read a full page when a snippet isn't enough</div>
+          <p style="margin-top:1rem;">
+            When the model decides to search, it doesn't run anything itself — it can't. It
+            emits a request naming one of these three tools plus the input for it. The code
+            reads that request, calls the real Python function, gets a real result back, and
+            hands that result to the model on its next turn. The model never touches the
+            network directly; it only ever asks, and only ever sees what comes back.
+          </p>
+        </div>
+
+        <h2>How can you actually be sure it's thinking the right thing?</h2>
+        <p class="section-sub">Honestly — you can't be certain from the rules alone. A rule is a strong nudge, not a guarantee; that's the whole lesson this project inherited from a prior one where "don't hallucinate," worded carefully twice, still failed. What you <em>can</em> do is stop trusting it blindly and go check.</p>
+        <div class="panel">
+          <span class="illustrative-tag">illustrative example, not a captured run</span>
+          <p style="margin-bottom:0.8rem; font-size:0.9rem; color:var(--muted);">Every turn's reasoning is now recorded alongside every tool call it made, so a real run can be read back afterward like this:</p>
+          <div class="trace-line thinking"><span class="k">iteration 0 · thinking</span> — "This asks for strategic significance, which is a judgment, not a fact. I should first find out what was actually announced, and separately what the competing restriction actually says, before I try to connect them."</div>
+          <div class="trace-line tool"><span class="k">iteration 0 · tool</span> — web_search("Z.ai open-source model release specifications")</div>
+          <div class="trace-line thinking"><span class="k">iteration 1 · thinking</span> — "I have the release details. I still don't have confirmation of the restriction itself — I shouldn't assume it's real or accurate just because the question states it that way."</div>
+          <div class="trace-line tool"><span class="k">iteration 1 · tool</span> — news_search("US restrictions on Anthropic AI models")</div>
+          <p style="margin-top:1rem;">
+            That's what makes this checkable rather than a black box: read the trace, and see
+            whether it actually decomposed the question the way rule 1 asks, or whether it
+            reached straight for a compound search and hoped for the best.
+          </p>
+        </div>
+        <div class="note">
+          <strong>The honest three-part answer:</strong> (1) you can now read its actual
+          reasoning, iteration by iteration, instead of trusting the rules worked; (2) you can
+          run the same known-tricky questions repeatedly (the eval suite exists for exactly
+          this) and see whether good behavior holds up across runs, not just once; (3) even
+          when the reasoning goes wrong, the budget cap and grounding check on the other two
+          pages bound how much damage that can do — they don't fix bad thinking, but they stop
+          it from running forever or reaching you completely unchecked.
+        </div>
+      </section>
+
+      <!-- THINKING VS FETCHING -->
+      <section id="think-vs-fetch" class="page-section wide">
+        <span class="eyebrow">how research happens</span>
+        <h1>Thinking vs. Fetching</h1>
+        <p class="dek">
+          The honest answer is that this isn't two things at all. There's no code anywhere
+          that decides "think now" or "fetch now" — every turn is <em>one</em> call to the
+          model, and thinking and fetching are just two parts of what comes back from it.
+        </p>
+
+        <h2>It reasons on every turn, whether it fetches or not</h2>
+        <p class="section-sub">Tested directly, both ways, to be sure this claim is observed rather than assumed:</p>
+        <div class="fact-callout">
+          <span class="fc-tag">confirmed live</span>
+          <span>Asked a trivial question with tool use explicitly forbidden ("what is 2+2, don't use tools"). The response still came back with a full <code>reasoning_content</code> field — <em>"The user asked a simple math question and specifically told me not to use any tools, so I'll just answer directly."</em> — even though it never touched a single tool. Reasoning isn't something that only happens when it's about to fetch; it happens every single turn, unconditionally.</span>
+        </div>
+
+        <h2>One API response, two independent fields</h2>
+        <p class="section-sub">This is the exact loop from <code>agent.py</code> — nothing simplified, nothing left out of what actually decides "fetch" vs. "stop":</p>
+        <div class="code-block"><span class="cm"># one call to the model - this is the ONLY place reasoning happens</span>
+response = self.llm.call(system=self.system_prompt, messages=messages, tools=TOOLS)
+message = response.choices[0].message
+
+<span class="cm"># the model's reasoning - present on EVERY turn, fetch or not</span>
+reasoning = getattr(message, <span class="str">"reasoning_content"</span>, None)
+<span class="kw">if</span> reasoning:
+    emit({<span class="str">"iteration"</span>: i, <span class="str">"thinking"</span>: reasoning})
+
+<span class="cm"># the fetch decision - just: did the SAME response also include tool_calls?</span>
+<span class="kw">if not</span> message.tool_calls:
+    <span class="kw">return</span> self._finish(question, message.content <span class="kw">or</span> <span class="str">""</span>, ...)  <span class="cm"># stop, no fetch</span>
+
+<span class="kw">for</span> tool_call <span class="kw">in</span> message.tool_calls:
+    func = _TOOL_FUNCS.get(tool_call.function.name)
+    result = func(**json.loads(tool_call.function.arguments))  <span class="cm"># fetch, for real</span></div>
+        <p class="code-caption">Nothing here reads "if the model wants to think, do X; if it wants to fetch, do Y." There's exactly one branch: does <code>message.tool_calls</code> exist or not. Reasoning already happened either way, above that branch, unconditionally.</p>
+
+        <h2>Two real turns, side by side</h2>
+        <p class="section-sub">Both captured live from the actual client. Same response shape, same fields present — the only difference is whether <code>tool_calls</code> ended up empty or not, which is entirely the model's call, made during the same generation that produced the reasoning above it.</p>
+        <div class="code-block"><span class="cm"># turn where it decided to fetch (asked for Bitcoin's price)</span>
+finish_reason: <span class="str">'tool_calls'</span>
+reasoning_content: <span class="str">"The user wants to know the current price of Bitcoin.
+                    Let me search for that."</span>
+tool_calls: [Function(name=<span class="str">'web_search'</span>, arguments=<span class="str">'{"query": "current Bitcoin price today"}'</span>)]
+content: None
+
+<span class="cm"># turn where it decided NOT to fetch (asked "what is 2+2", tools forbidden)</span>
+finish_reason: <span class="str">'stop'</span>
+reasoning_content: <span class="str">"The user asked a simple math question and specifically
+                    told me not to use any tools, so I'll just answer directly."</span>
+tool_calls: None
+content: <span class="str">"2+2 = 4."</span></div>
+        <p class="code-caption">Same two fields, every time. What decides "fetch or don't" is entirely inside the model's own generation — not something this codebase inspects or controls, only something it reads back afterward.</p>
+
+        <h2>Which tool it fetches with — web_search / news_search vs. fetch_page</h2>
+        <p class="section-sub">This part <em>is</em> steered by something we write: each tool's description is the only signal the model has for which one fits.</p>
+        <div class="code-block">{
+    <span class="str">"name"</span>: <span class="str">"fetch_page"</span>,
+    <span class="str">"description"</span>: (
+        <span class="str">"Fetch and read the full body text of a specific URL, e.g. one returned by "</span>
+        <span class="str">"web_search or news_search, when the snippet isn't enough detail."</span>
+    ),
+}</div>
+        <p class="code-caption">
+          That description is written as a follow-up action, not a starting move — it explicitly
+          points at URLs "returned by web_search or news_search." In practice this produces a
+          two-hop pattern: a broad <code>web_search</code>/<code>news_search</code> call first to
+          discover candidate URLs and snippets, then a <code>fetch_page</code> call on a specific
+          one of those URLs if the snippet alone wasn't enough. Nothing in the code enforces this
+          order — it's the tool descriptions doing the steering, the same lever rule 1-4 use for
+          everything else.
+        </p>
+        <div class="note">
+          <strong>On the fetch_page failures you noticed:</strong> flagged for later, not
+          forgotten — some URLs returned by search don't scrape cleanly (paywalls, JS-rendered
+          pages, timeouts), and <code>fetch_page</code> currently just returns an empty string or
+          an error message in those cases rather than doing anything smarter about it. Worth its
+          own pass once we're improving the loop.
+        </div>
+      </section>
+
+      <!-- SEARCH BUDGET -->
+      <section id="search-budget" class="page-section wide">
+        <span class="eyebrow">how research happens</span>
+        <h1>Search Budget Enforcement</h1>
+        <p class="dek">The model can search up to 8 times. On the 8th, its ability to search again is physically removed — not just discouraged.</p>
+        <div class="panel">
+          <div class="meter">
+            <div class="meter-step"><div class="meter-box">1</div><div class="meter-label">search allowed</div></div>
+            <div class="meter-step"><div class="meter-box">2</div><div class="meter-label">search allowed</div></div>
+            <div class="meter-step"><div class="meter-box">3</div><div class="meter-label">search allowed</div></div>
+            <div class="meter-step"><div class="meter-box">…</div><div class="meter-label">search allowed</div></div>
+            <div class="meter-step"><div class="meter-box">8</div><div class="meter-label">search allowed</div></div>
+            <div class="meter-step locked"><div class="meter-box">9</div><div class="meter-label">no tools given to the model — it cannot search even if it wants to</div></div>
+          </div>
+          <p class="meter-caption">
+            Turn 9 isn't the model choosing to stop. The code calls it one last time with an
+            <strong style="color:var(--paper)">empty list of tools</strong> — there's nothing
+            left for it to call. That's the whole trick: enforcement here means taking the
+            capability away, not asking politely.
+          </p>
+        </div>
+      </section>
+
+      <!-- GROUNDING CHECK -->
+      <section id="grounding-check" class="page-section wide">
+        <span class="eyebrow">checking the output</span>
+        <h1>Grounding Check</h1>
+        <p class="dek">Every report the model writes gets checked afterward, automatically, whether the model wants that or not.</p>
+        <div class="panel">
+          <div class="flow">
+            <div class="flow-node"><div class="flow-box"><span class="t">Model writes its final report</span><span class="d">plain text, may contain comparisons like "X vs Y"</span></div></div>
+            <div class="flow-connector"></div>
+            <div class="flow-node"><div class="flow-box"><span class="t">Code splits it into sentences</span><span class="d">looking only for ones containing "vs" / "versus" / "compared to"</span></div></div>
+            <div class="flow-connector"></div>
+            <div class="flow-node"><div class="flow-box"><span class="t">For each name in that sentence: does it appear anywhere in what was actually searched?</span><span class="d">"what was actually searched" = every real tool result collected during the loop</span></div></div>
+            <div class="flow-connector"></div>
+            <div class="branch">
+              <div class="branch-box pass"><span class="t">Found it</span>sentence left alone</div>
+              <div class="branch-box fail"><span class="t">Not found</span>"[UNVERIFIED: name not found in retrieved sources]" is appended, visibly</div>
+            </div>
+          </div>
+          <p class="meter-caption">
+            This runs on <strong style="color:var(--paper)">every</strong> return path out of
+            the agent, unconditionally — the model has no way to skip it or mark itself as
+            trustworthy enough to bypass it.
+          </p>
+        </div>
+      </section>
+
+      <!-- IDENTITY GAP -->
+      <section id="identity-gap" class="page-section wide">
+        <span class="eyebrow">checking the output</span>
+        <h1>Identity Verification — the Gap</h1>
+        <p class="dek">Right now, nothing checks whether the model actually looked something up before deciding what kind of thing it is.</p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>What the final report claims</th><th>Was it ever actually searched?</th><th>Status today</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>"Product A is a coding agent"</td>
+                  <td>Yes — <code>web_search("what is Product A")</code> appears in the trace</td>
+                  <td><span class="status-pill ok">would be fine</span></td>
+                </tr>
+                <tr>
+                  <td>"Product B is also a coding agent, so it's comparable"</td>
+                  <td>No — no tool call anywhere in the trace ever mentions "Product B"</td>
+                  <td><span class="status-pill missing">should be flagged</span></td>
+                </tr>
+                <tr>
+                  <td colspan="2" style="color:var(--muted); font-style:italic;">Checking column 2 against the report and flagging row 2 automatically</td>
+                  <td><span class="status-pill notbuilt">not built</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="meter-caption">
+            The raw material for this already exists — every real tool call is logged during
+            the loop. The missing piece is simply: after the model finishes, look at every
+            entity it named, and check whether that entity's name shows up in <em>any</em>
+            logged search. If it doesn't, that entity was never actually looked up — it was
+            assumed. Same idea as the grounding check, just checking searches instead of
+            results.
+          </p>
+        </div>
+        <div class="note">
+          <strong>In one line:</strong> "code-enforced" in this project always means one of two
+          things — take away the model's ability to do something, or check its output against
+          real evidence after the fact and flag what doesn't hold up. A prompt instruction
+          alone was tried and shown to fail in the prior project this one replaces; it's never
+          trusted here to hold on its own.
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+</div>
+
+<script>
+  function showSection(id) {
+    var sections = document.querySelectorAll('.page-section');
+    var found = false;
+    sections.forEach(function (el) {
+      if (el.id === id) { el.classList.add('visible'); found = true; }
+      else { el.classList.remove('visible'); }
+    });
+    if (!found) {
+      document.getElementById('overview').classList.add('visible');
+      id = 'overview';
+    }
+    document.querySelectorAll('.nav-link').forEach(function (link) {
+      link.classList.toggle('active', link.getAttribute('data-target') === id);
+    });
+    window.scrollTo(0, 0);
+  }
+
+  window.addEventListener('hashchange', function () {
+    showSection(location.hash.replace('#', ''));
+  });
+
+  document.addEventListener('DOMContentLoaded', function () {
+    showSection(location.hash.replace('#', '') || 'overview');
+  });
+</script>
+</body>
+</html>

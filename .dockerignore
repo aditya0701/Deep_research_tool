@@ -1,0 +1,13 @@
+.env
+.git
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+.chainlit/*.db
+chainlit.log
+output.txt
+prev_project_context/
+tests/
+scripts/
+search_enforcement_explainer.html

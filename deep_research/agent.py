@@ -1,0 +1,281 @@
+"""Core research agent: an orchestration loop around a thinking-capable LLM with
+search tools.
+
+The model owns the reasoning - deciding what to search, whether a result is
+enough, when to stop. This module owns everything the model cannot do itself:
+actually executing tool calls (a model can request a search, it cannot make
+the HTTP request), enforcing a hard iteration budget regardless of what the
+model wants (a stopping condition must be code-enforced, not just prompted -
+see TechDrishti's runaway-generation history), and running the grounding
+check on the final report before returning it.
+"""
+import json
+
+from .grounding import check_grounding
+from .llm_client import LLMClient
+from .tools import calculate, fetch_page, get_current_date, news_search, web_search
+
+MAX_ITERATIONS = 8
+
+# Shared across every task framing (direct Q&A, article enrichment, ...) - these are
+# constraints on how the agent researches, independent of what it's researching.
+# Note rule 1 governs the *top-level* question/task, not the low-level search queries:
+# the agent should never shy away from an interpretive top-level question, but the actual
+# strings it sends to web_search/news_search must still be atomic fact lookups, since that
+# part is a real constraint of how search engines work, not a limitation of its reasoning.
+CORE_RULES = """Rules learned from a prior project's failures - follow them exactly:
+1. Search engines return facts, not judgments. If your task is interpretive ("what is the
+   strategic significance of X"), decompose it into concrete fact sub-questions first
+   (pricing, specs, dates, quotes, deal terms), retrieve those, and do the synthesis/judgment
+   yourself in your final answer - never search for the judgment directly. Do not water an
+   interpretive angle down into a shallow one just because it isn't a single fact lookup -
+   decompose it instead of dropping it.
+2. Before comparing X to Y, confirm they are genuinely the same kind of thing - sharing a
+   broad domain or category is not enough. Two things can occupy the same field while playing
+   completely different roles in it (e.g. a bathroom tap and a sink are both plumbing fixtures
+   in the same field, but a tap is a valve mechanism and a sink is a basin - comparing them
+   head-to-head would be a category error even though "they're both bathroom fixtures" sounds
+   like a match). This applies in any domain you research, not just obvious cases: a raw
+   component, a tool built on top of that component, and an end-user product built using that
+   tool can all sit in the same field while being three different kinds of thing to compare.
+   Identify what specific kind of thing each side actually is before treating a comparison as
+   valid - not just whether they share a category label. If you are not already certain what
+   kind of thing an entity is, verify it with a search instead of guessing from the name or
+   from your own training knowledge, which can be outdated or simply wrong for anything recent
+   - a quick "what is X" search is cheap; a wrong assumption about what X even is poisons the
+   whole comparison. Only once that's confirmed, fetch facts about each side independently via
+   separate searches, then compare. Never invent a comparison target that wasn't named in the 
+   task or in material you've actually retrieved - if no real, same-kind comparator is evident
+   , search broadly for real matches or say the
+   comparison target is unclear.
+3. Every factual claim in your final report must be traceable to something you actually
+   retrieved via a tool call in this conversation. Do not state a fact you did not retrieve.
+4. You have a limited number of tool calls. Prioritize the highest-value searches first, and
+   stop searching once you have enough to answer confidently rather than exhausting every
+   possible angle.
+5. If fetch_page returns an error for a URL, do not treat that source as unavailable yet -
+   web_search and news_search usually return several results at once, so try a different URL
+   from those same results first (this costs nothing extra). If none of them work, or a search
+   itself comes back empty or unhelpful, rephrase the query and search again, within your
+   budget, before concluding that a piece of information genuinely isn't available.
+6. Always use the calculate tool for any arithmetic beyond trivial single-step math -
+   percentages, CAGR, growth rates, differences between multiple figures. Do not compute these
+   by hand in your reasoning, even if you are confident in the result - use the tool every
+   time, not just when unsure.
+"""
+
+SYSTEM_PROMPT = f"""You are a deep research agent. Given a research question, investigate it
+thoroughly using the tools available, then produce a well-organized, cited report.
+
+{CORE_RULES}
+When you are done researching, respond with your final report as plain text (no more tool
+calls) organized with clear sections and inline source URLs.
+"""
+
+TOOLS = [
+    {
+        "name": "web_search",
+        "description": (
+            "General-purpose web search for a specific factual query. Use atomic, "
+            "fact-seeking queries (e.g. 'GLM-5.2 pricing'), not compound or interpretive "
+            "questions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "news_search",
+        "description": (
+            "Search recent news coverage for a specific query. Best for recency-sensitive "
+            "facts (announcements, deals, launches)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "fetch_page",
+        "description": (
+            "Fetch and read the full body text of a specific URL, e.g. one returned by "
+            "web_search or news_search, when the snippet isn't enough detail. Works for "
+            "both regular web pages and PDFs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "get_current_date",
+        "description": (
+            "Returns today's date. Use this whenever a task depends on recency (how long ago "
+            "something happened, whether it's still current) rather than assuming today's date "
+            "from your own training knowledge, which has a cutoff."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "calculate",
+        "description": (
+            "Safely evaluates a purely arithmetic expression (+ - * / ** % and parentheses "
+            "only, e.g. '(490-310)/310*100'). Use this for any percentage change, CAGR, or "
+            "growth-rate math instead of doing it by hand - multi-step arithmetic done in "
+            "reasoning is error-prone."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+        },
+    },
+]
+
+_TOOL_FUNCS = {
+    "web_search": web_search,
+    "news_search": news_search,
+    "fetch_page": fetch_page,
+    "get_current_date": get_current_date,
+    "calculate": calculate,
+}
+
+# Only genuine retrieval tools count as "evidence" for the grounding check - calculate
+# operates on data the model already has (or invented), so treating its output as
+# retrieved evidence would create a loophole: a fabricated number run through calculate
+# would make itself look grounded just by being present in the conversation.
+_EVIDENCE_TOOLS = {"web_search", "news_search", "fetch_page"}
+
+# When the search budget runs out, retrieval specifically should stop - but calculate
+# doesn't search, doesn't hit the network, and can't cause a runaway loop, so cutting it
+# off too just produces an incomplete report instead of actually stopping research.
+# Confirmed live: without this, the model never got a chance to use calculate at all,
+# because the forced-final call removed every tool indiscriminately.
+_UTILITY_TOOLS = [t for t in TOOLS if t["name"] not in _EVIDENCE_TOOLS]
+
+
+class ResearchAgent:
+    def __init__(
+        self,
+        llm_client: LLMClient | None = None,
+        max_iterations: int = MAX_ITERATIONS,
+        system_prompt: str | None = None,
+    ):
+        self.llm = llm_client or LLMClient()
+        self.max_iterations = max_iterations
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
+
+    def _execute_tool_call(self, tool_call, retrieved_texts: list[str]) -> str:
+        func = _TOOL_FUNCS.get(tool_call.function.name)
+        try:
+            args = json.loads(tool_call.function.arguments)
+            result = func(**args) if func else f"Unknown tool: {tool_call.function.name}"
+        except Exception as e:
+            result = f"Tool error: {e}"
+        result_text = result if isinstance(result, str) else json.dumps(result)
+        if tool_call.function.name in _EVIDENCE_TOOLS:
+            retrieved_texts.append(result_text)
+        return result_text
+
+    def run(self, question: str, on_step=None) -> dict:
+        """`on_step`, if given, is called synchronously with each trace entry the moment it
+        happens (not just once at the end) - lets a caller (e.g. a UI running this in a
+        background thread) show the agent's reasoning and searches live instead of only
+        after the whole run finishes."""
+        messages = [{"role": "user", "content": question}]
+        retrieved_texts = []
+        trace = []
+
+        def emit(step):
+            trace.append(step)
+            if on_step:
+                on_step(step)
+
+        for i in range(self.max_iterations):
+            response = self.llm.call(system=self.system_prompt, messages=messages, tools=TOOLS)
+            message = response.choices[0].message
+            finish_reason = response.choices[0].finish_reason
+
+            # "length" means the response was cut off by max_tokens mid-generation, not that
+            # the model chose to stop - previously invisible, so a truncated reasoning pass or
+            # a truncated final answer looked identical to a clean one. Surfaced in the trace
+            # so a cut-off report is diagnosable instead of silently accepted as complete.
+            if finish_reason == "length":
+                emit({"iteration": i, "warning": "response cut off at max_tokens (finish_reason=length)"})
+
+            # DeepSeek-specific field, not part of the OpenAI spec - read defensively rather
+            # than assumed present, especially alongside a tool call in the same turn.
+            reasoning = getattr(message, "reasoning_content", None)
+            if reasoning:
+                emit({"iteration": i, "thinking": reasoning})
+
+            messages.append(message.model_dump(exclude_none=True))
+
+            if not message.tool_calls:
+                return self._finish(question, message.content or "", retrieved_texts, trace, i + 1, forced=False)
+
+            for tool_call in message.tool_calls:
+                result_text = self._execute_tool_call(tool_call, retrieved_texts)
+                emit(
+                    {
+                        "iteration": i,
+                        "tool": tool_call.function.name,
+                        "input": tool_call.function.arguments,
+                        "result": result_text,
+                    }
+                )
+                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+
+        # Hard budget exhausted - code-enforced stop on searching specifically, not left to
+        # the model's own judgment. Computation/formatting is still allowed for one more turn
+        # (see _UTILITY_TOOLS above) so it can finish writing up what it already found.
+        messages.append(
+            {
+                "role": "user",
+                "content": "You've reached the search budget - no more web_search, news_search, "
+                "or fetch_page calls. You may still use calculate if needed, then provide your "
+                "final report.",
+            }
+        )
+        response = self.llm.call(system=self.system_prompt, messages=messages, tools=_UTILITY_TOOLS)
+        message = response.choices[0].message
+        messages.append(message.model_dump(exclude_none=True))
+
+        if message.tool_calls:
+            for tool_call in message.tool_calls:
+                result_text = self._execute_tool_call(tool_call, retrieved_texts)
+                emit(
+                    {
+                        "iteration": self.max_iterations,
+                        "tool": tool_call.function.name,
+                        "input": tool_call.function.arguments,
+                        "result": result_text,
+                    }
+                )
+                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+            messages.append(
+                {"role": "user", "content": "Provide your final report now, as plain text, no more tool calls."}
+            )
+            response = self.llm.call(system=self.system_prompt, messages=messages, tools=[])
+            message = response.choices[0].message
+
+        if response.choices[0].finish_reason == "length":
+            trace.append({"warning": "final report cut off at max_tokens (finish_reason=length)"})
+        final_text = message.content or ""
+        return self._finish(question, final_text, retrieved_texts, trace, self.max_iterations, forced=True)
+
+    @staticmethod
+    def _finish(question, final_text, retrieved_texts, trace, iterations_used, forced):
+        grounded_report, dropped = check_grounding(final_text, retrieved_texts)
+        trace.append({"action": "forced_final_answer" if forced else "final_answer"})
+        return {
+            "question": question,
+            "report": grounded_report,
+            "flagged_claims": dropped,
+            "iterations_used": iterations_used,
+            "trace": trace,
+        }

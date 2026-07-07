@@ -1,0 +1,8 @@
+openai>=1.50.0
+ddgs
+feedparser
+beautifulsoup4
+requests
+python-dotenv
+chainlit
+pypdf
