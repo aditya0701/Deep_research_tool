@@ -5,14 +5,21 @@ and Chainlit already owns it (`chainlit.server.app`, a real FastAPI instance) - 
 module adds one route onto that same app instead of standing up a second process that
 would need its own port HF Spaces has no way to expose.
 
-Two modes are wired up: concise_mode (a short, cited answer) and plain ask mode (the full
-research report, e.g. for a caller that wants the whole write-up rather than a distilled
-conclusion). Article mode isn't exposed here - it takes a full article body as input and
-produces a Hindi article for a person to read, which fits the chat UI, not a scripted caller.
+Three modes are wired up: concise_mode (a short, cited answer - the model self-classifies
+each question as simple/ambiguous/complex and only does full research for genuinely complex
+ones), plain ask mode (the full research report on any question, for a caller that wants the
+whole write-up rather than a distilled conclusion), and article mode (given an article's
+title/body, researches what's genuinely missing from it and optionally writes the Hindi
+article - the same job the Chainlit "Research an article"/"Write an article" profiles do).
+
+Every request body accepts an optional `provider` field ("deepseek" or "sarvam"), mirroring
+the backend switcher in the Chainlit UI's settings panel - so a caller can A/B the same
+question against both providers without touching env vars or restarting the server. Omitting
+it falls back to LLM_PROVIDER's default, same as the chat UI on first load.
 
 Protected by a shared-secret header rather than left open, because a public Space with an
 unauthenticated POST route is an unauthenticated way for anyone on the internet to spend
-this project's DeepSeek API quota.
+this project's DeepSeek/Sarvam API quota.
 """
 import os
 
@@ -20,13 +27,30 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from .agent import ResearchAgent
+from .article_mode import research_article
 from .concise_mode import answer_concisely
+from .llm_client import LLMClient
 
 router = APIRouter()
 
 
+def _make_llm_client(provider: str | None) -> LLMClient:
+    try:
+        return LLMClient(provider=provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _iteration_kwargs(llm_client: LLMClient) -> dict:
+    # Mirrors app.py: Sarvam has taken more iterations than DeepSeek to reach an answer in
+    # side-by-side testing, so give it a fixed 12-turn budget regardless of mode rather than
+    # letting it run unbounded on the caller-facing default.
+    return {"max_iterations": 12} if llm_client.provider == "sarvam" else {}
+
+
 class ConciseRequest(BaseModel):
     question: str
+    provider: str | None = None
 
 
 class ConciseResponse(BaseModel):
@@ -41,6 +65,10 @@ class ConciseResponse(BaseModel):
     # citation style the model's own answer text used, so a caller has something concrete
     # to resolve claims against even if the model's inline citations are inconsistent.
     sources: list[str]
+    # Which backend/model actually produced this answer - lets a caller A/B the same
+    # question across providers without guessing from the request alone.
+    provider: str
+    model: str
 
 
 def _check_api_key(x_api_key: str | None) -> None:
@@ -60,7 +88,8 @@ def concise_endpoint(body: ConciseRequest, x_api_key: str | None = Header(defaul
     thread pool automatically, so the blocking LLM/HTTP calls inside answer_concisely
     don't stall the event loop Chainlit's own websocket traffic shares this process with."""
     _check_api_key(x_api_key)
-    result = answer_concisely(body.question)
+    llm_client = _make_llm_client(body.provider)
+    result = answer_concisely(body.question, llm_client=llm_client, **_iteration_kwargs(llm_client))
     return ConciseResponse(
         question=result["question"],
         category=result["category"],
@@ -69,16 +98,21 @@ def concise_endpoint(body: ConciseRequest, x_api_key: str | None = Header(defaul
         flagged_claims=result["flagged_claims"],
         iterations_used=result["iterations_used"],
         sources=result["sources"],
+        provider=llm_client.provider,
+        model=llm_client.model,
     )
 
 
 class ResearchRequest(BaseModel):
     question: str
+    provider: str | None = None
 
 
 class ResearchResponse(BaseModel):
     report: str
     sources: list[str]
+    provider: str
+    model: str
 
 
 @router.post("/api/research", response_model=ResearchResponse)
@@ -89,5 +123,53 @@ def research_endpoint(body: ResearchRequest, x_api_key: str | None = Header(defa
     for "just the final report", not the internals a person debugging the agent in the chat
     UI would want."""
     _check_api_key(x_api_key)
-    result = ResearchAgent().run(body.question)
-    return ResearchResponse(report=result["report"], sources=result["sources"])
+    llm_client = _make_llm_client(body.provider)
+    result = ResearchAgent(llm_client=llm_client, **_iteration_kwargs(llm_client)).run(body.question)
+    return ResearchResponse(
+        report=result["report"], sources=result["sources"], provider=llm_client.provider, model=llm_client.model
+    )
+
+
+class ArticleRequest(BaseModel):
+    title: str
+    body: str
+    # Defaults to True to match article_mode.research_article's own default (mirrors the
+    # Chainlit "Write an article" profile) - set false for just the English research
+    # findings, matching the "Research an article" profile instead.
+    write_hindi: bool = True
+    provider: str | None = None
+
+
+class ArticleResponse(BaseModel):
+    title: str
+    report: str
+    hindi_article: str | None = None
+    flagged_claims: list[str]
+    iterations_used: int
+    sources: list[str]
+    provider: str
+    model: str
+
+
+@router.post("/api/article", response_model=ArticleResponse)
+def article_endpoint(body: ArticleRequest, x_api_key: str | None = Header(default=None)) -> ArticleResponse:
+    """Article mode: given an article's title and full body text, finds what's genuinely
+    missing from it, researches those gaps in one session, and (unless write_hindi=false)
+    weaves the original article and the new findings into one Hindi-language article -
+    exactly what the Chainlit "Research an article"/"Write an article" profiles do, just
+    reachable over plain HTTP instead of the chat UI."""
+    _check_api_key(x_api_key)
+    llm_client = _make_llm_client(body.provider)
+    result = research_article(
+        body.title, body.body, write_hindi=body.write_hindi, llm_client=llm_client, **_iteration_kwargs(llm_client)
+    )
+    return ArticleResponse(
+        title=result["title"],
+        report=result["report"],
+        hindi_article=result.get("hindi_article"),
+        flagged_claims=result["flagged_claims"],
+        iterations_used=result["iterations_used"],
+        sources=result["sources"],
+        provider=llm_client.provider,
+        model=llm_client.model,
+    )
