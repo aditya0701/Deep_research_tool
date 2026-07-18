@@ -1,5 +1,6 @@
 .env
 .sarvanenv
+%SystemDrive%/
 __pycache__/
 **/__pycache__/
 *.pyc
