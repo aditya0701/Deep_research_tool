@@ -9,12 +9,15 @@ back as a `reasoning_content` field alongside `content`, not a typed content
 block - read defensively (`getattr(..., None)`) since it isn't part of the
 official OpenAI spec DeepSeek's API otherwise mirrors.
 
-Sarvam (https://api.sarvam.ai/v1) is also OpenAI-compatible and returns
+Sarvam (https://api.sarvam.ai/v1) and Groq
+(https://api.groq.com/openai/v1) are also OpenAI-compatible and return
 reasoning the same way via `reasoning_content`, so agent.py's defensive
-getattr read covers both providers unchanged. Switch providers with the
-`LLM_PROVIDER` env var (`deepseek` default, or `sarvam`) - this exists to
-A/B the same agent loop against both backends, not as a permanent
-multi-provider abstraction.
+getattr read covers all providers unchanged. Switch providers with the
+`LLM_PROVIDER` env var (`deepseek` default, or `sarvam`/`groq`) - this
+exists to A/B the same agent loop across backends for eval/comparison, not
+as a permanent multi-provider abstraction. Groq's default is
+openai/gpt-oss-120b on its free tier (rate-limited; good for comparison
+runs, not sustained load).
 
 Tool schemas are accepted here in the same flat shape agent.py already uses
 (name, description, input_schema) and converted internally to OpenAI's
@@ -53,6 +56,19 @@ _PROVIDERS = {
         "api_key_env": "SARVAM_API_KEY",
         "default_model": os.environ.get("SARVAM_MODEL", "sarvam-105b"),
         "default_max_tokens": 4096,
+    },
+    # Groq's free tier: OpenAI-compatible, so no client changes needed. Default is
+    # openai/gpt-oss-120b - Groq's flagship for agentic tool-calling (it deprecated the
+    # Llama chat models and now steers new work to the gpt-oss models). gpt-oss-20b is the
+    # faster/cheaper counterpart for loop steps. Both do function calling. Free tier is
+    # rate-limited (30 RPM, per-model daily token caps), so this is for eval/comparison, not
+    # sustained load. Like the gpt-oss/deepseek-v4 models, these reason and return it via
+    # reasoning_content, which agent.py's defensive getattr already handles.
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_key_env": "GROQ_API_KEY",
+        "default_model": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+        "default_max_tokens": 8000,
     },
 }
 DEFAULT_MAX_TOKENS = int(

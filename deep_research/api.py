@@ -12,9 +12,9 @@ whole write-up rather than a distilled conclusion), and article mode (given an a
 title/body, researches what's genuinely missing from it and optionally writes the Hindi
 article - the same job the Chainlit "Research an article"/"Write an article" profiles do).
 
-Every request body accepts an optional `provider` field ("deepseek" or "sarvam"), mirroring
-the backend switcher in the Chainlit UI's settings panel - so a caller can A/B the same
-question against both providers without touching env vars or restarting the server. Omitting
+Every request body accepts an optional `provider` field ("deepseek", "sarvam", or "groq"),
+mirroring the backend switcher in the Chainlit UI's settings panel - so a caller can A/B the
+same question across providers without touching env vars or restarting the server. Omitting
 it falls back to LLM_PROVIDER's default, same as the chat UI on first load.
 
 Protected by a shared-secret header rather than left open, because a public Space with an

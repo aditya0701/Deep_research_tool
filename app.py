@@ -20,6 +20,10 @@ from deep_research.article_mode import research_article
 from deep_research.concise_mode import answer_concisely
 from deep_research.llm_client import DEFAULT_PROVIDER, LLMClient
 
+# Backends offered in the settings dropdown. Kept as one list so the values and the
+# initial_index lookup can't drift apart. groq is the free-tier option for comparison runs.
+_PROVIDER_CHOICES = ["deepseek", "sarvam", "groq"]
+
 # Adds POST /api/concise onto Chainlit's own FastAPI app - Hugging Face Spaces exposes only
 # one port, and Chainlit already owns it, so a plain HTTP caller (GitHub Actions, another
 # model) hits this route directly instead of needing a second port Spaces has no way to
@@ -82,8 +86,10 @@ async def on_chat_start():
             Select(
                 id="llm_provider",
                 label="LLM backend",
-                values=["deepseek", "sarvam"],
-                initial_index=["deepseek", "sarvam"].index(DEFAULT_PROVIDER),
+                values=_PROVIDER_CHOICES,
+                initial_index=_PROVIDER_CHOICES.index(DEFAULT_PROVIDER)
+                if DEFAULT_PROVIDER in _PROVIDER_CHOICES
+                else 0,
             )
         ]
     ).send()
