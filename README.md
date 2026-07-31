@@ -1,14 +1,3 @@
----
-title: Deep Research Agent
-emoji: 🔎
-colorFrom: indigo
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
----
-
 # Deep Research Agent
 
 An **autonomous research agent** powered by DeepSeek V4 Flash — not a fixed search-and-summarize pipeline. It decides how many searches to run, what to search next based on what it's already found, and when it has enough grounded evidence to stop. Every claim is checked in code against the pages actually retrieved during the run.
