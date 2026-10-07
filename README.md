@@ -36,6 +36,8 @@ Use it in the chat UI on this Space, call it over HTTP, or fork it and run it yo
 
 ### In the chat UI
 
+**Access is by invitation.** Every research run uses the owner's API quota, so the chat UI is behind a login. To get an account, email **adiman64@gmail.com**. Each account is limited to 10 research runs per hour; email the same address if you need more.
+
 Pick a profile when you start a chat:
 
 | Profile | Input | Output |
@@ -94,7 +96,8 @@ cd Deep_research_tool
 pip install -r requirements.txt
 
 cp .env.example .env
-# edit .env and set DEEPSEEK_API_KEY (or switch provider, see below)
+# edit .env: set DEEPSEEK_API_KEY (or switch provider, see below),
+# and either APP_USERS + CHAINLIT_AUTH_SECRET or ALLOW_ANONYMOUS=true for local use
 
 chainlit run app.py -w
 ```
@@ -122,6 +125,10 @@ python -m deep_research.cli article "Article Title" path/to/article_body.txt
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model. `openai/gpt-oss-20b` is faster and cheaper. |
 | `SARVAM_API_KEY` | none | Required to use Sarvam. Can live in a `.sarvanenv` file instead of `.env`. |
 | `SARVAM_MODEL` | `sarvam-105b` | Sarvam model. |
+| `APP_USERS` | none | Chat UI logins as `name:password,name2:password2`. With none set, nobody can log in. |
+| `CHAINLIT_AUTH_SECRET` | none | Required for login. Generate one with `chainlit create-secret`. |
+| `RUNS_PER_HOUR` | `10` | Research runs allowed per user per rolling hour. |
+| `ALLOW_ANONYMOUS` | `false` | Set `true` to skip the login. For local development only. |
 | `CONCISE_API_KEY` | none | Shared secret for the `/api/*` endpoints. If unset, every API request is refused. |
 
 Provider keys only matter for the backends you actually use.
@@ -130,7 +137,7 @@ Provider keys only matter for the backends you actually use.
 
 1. Create a new Space and choose **Docker** as the SDK. The frontmatter at the top of this README already sets `sdk: docker` and `app_port: 7860`.
 2. Push this repository to the Space.
-3. In **Settings → Variables and secrets**, add your keys as **secrets**: `DEEPSEEK_API_KEY`, plus `CONCISE_API_KEY` if you want the HTTP API, plus any other provider keys.
+3. In **Settings → Variables and secrets**, add your keys as **secrets**: `DEEPSEEK_API_KEY`, `APP_USERS`, `CHAINLIT_AUTH_SECRET`, plus `CONCISE_API_KEY` if you want the HTTP API, plus any other provider keys.
 4. If you added secrets after the first build, restart the Space.
 
 The CPU basic tier is enough. All model work happens through provider APIs, so no GPU is needed. Never commit API keys to the repository.

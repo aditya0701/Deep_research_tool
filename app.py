@@ -9,6 +9,9 @@ rather than only showing the final report after the whole run completes.
 Run with: chainlit run app.py -w
 """
 import asyncio
+import hmac
+import os
+import time
 
 import chainlit as cl
 from chainlit.input_widget import Select
@@ -30,6 +33,56 @@ _PROVIDER_CHOICES = ["deepseek", "sarvam", "groq"]
 # expose. Must happen at import time of this module, before Chainlit finishes mounting its
 # catch-all SPA route.
 fastapi_app.include_router(concise_api_router)
+
+# --- Access control -------------------------------------------------------------------
+# Every research run spends the owner's provider API quota, so the chat UI sits behind a
+# login. Accounts come from the APP_USERS secret ("name:password,name2:password2") - the
+# owner hands them out on request. Fails closed: with no APP_USERS set nobody can log in,
+# unless ALLOW_ANONYMOUS=true is set explicitly (local development only). Chainlit also
+# needs CHAINLIT_AUTH_SECRET set whenever login is enabled. The /api/* routes are separate
+# and guarded by their own X-API-Key header, so they are unaffected.
+_ALLOW_ANONYMOUS = os.environ.get("ALLOW_ANONYMOUS", "").strip().lower() in ("1", "true", "yes")
+
+
+def _load_users() -> dict[str, str]:
+    users = {}
+    for entry in os.environ.get("APP_USERS", "").split(","):
+        name, sep, password = entry.strip().partition(":")
+        if sep and name and password:
+            users[name] = password
+    return users
+
+
+_USERS = _load_users()
+
+# Per-user cap on research runs per rolling hour, held in memory (resets on restart, which
+# is fine for a single-container Space). A login stops anonymous abuse; this stops one
+# account from draining the quota on its own.
+_RUNS_PER_HOUR = int(os.environ.get("RUNS_PER_HOUR", "10"))
+_run_times: dict[str, list[float]] = {}
+
+
+def _rate_limit_wait_minutes(user_id: str) -> int | None:
+    """Records a run and returns None if allowed, else minutes until the next slot opens."""
+    now = time.time()
+    recent = [t for t in _run_times.get(user_id, []) if now - t < 3600]
+    if len(recent) >= _RUNS_PER_HOUR:
+        _run_times[user_id] = recent
+        return max(1, int((recent[0] + 3600 - now) / 60) + 1)
+    recent.append(now)
+    _run_times[user_id] = recent
+    return None
+
+
+if not _ALLOW_ANONYMOUS:
+
+    @cl.password_auth_callback
+    def auth_callback(username: str, password: str):
+        expected = _USERS.get(username)
+        if expected is not None and hmac.compare_digest(expected.encode(), password.encode()):
+            return cl.User(identifier=username)
+        return None
+
 
 ASK_PROFILE = "Ask a question"
 CONCISE_PROFILE = "Quick grounded answer"
@@ -117,6 +170,16 @@ async def on_settings_update(settings: dict):
 async def on_message(message: cl.Message):
     profile = cl.user_session.get("chat_profile")
     provider = cl.user_session.get("llm_provider") or DEFAULT_PROVIDER
+    user = cl.user_session.get("user")
+    wait = _rate_limit_wait_minutes(user.identifier if user else "anonymous")
+    if wait is not None:
+        await cl.Message(
+            content=(
+                f"You've reached the limit of {_RUNS_PER_HOUR} research runs per hour. "
+                f"Please try again in about {wait} minute(s)."
+            )
+        ).send()
+        return
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 

@@ -9,6 +9,10 @@ retrieved — no comparison or fact makes it into the final answer unless it
 was found in the evidence, not just asserted by the model. Unverified claims
 are flagged inline rather than silently kept or dropped.
 
+**Access** — this tool is login-protected because every run uses the owner's
+API quota. Need an account, or hit the hourly run limit? Email
+**adiman64@gmail.com**.
+
 **Four modes, in the sidebar:**
 - **Ask a question** — pose any research question directly and get the full
   research report.
