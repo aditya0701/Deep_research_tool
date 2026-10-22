@@ -12,6 +12,10 @@ pinned: false
 
 An **autonomous research agent**, not a fixed search-and-summarize pipeline. It decides how many searches to run, what to look for next based on what it has already found, and when it has enough evidence to stop. Claims in the final report are then checked in code against the pages the agent actually retrieved.
 
+**Open the app: https://aditya0701-deepseek-mini-research-tool.hf.space/**
+
+> Log in at that address, in its own browser tab. Logging in on the huggingface.co Space page does not work, because browsers block the login cookie inside the embedded frame.
+
 Use it in the chat UI on this Space, call it over HTTP, or fork it and run it yourself.
 
 ---
@@ -36,7 +40,7 @@ Use it in the chat UI on this Space, call it over HTTP, or fork it and run it yo
 
 ### In the chat UI
 
-**Access is by invitation.** Every research run uses the owner's API quota, so the chat UI is behind a login. To get an account, email **adiman64@gmail.com**. Each account is limited to 10 research runs per hour; email the same address if you need more.
+**Access is by invitation.** Every research run uses the owner's API quota, so the chat UI is behind a login. To get an account, email **adiman64@gmail.com**. Log in at https://aditya0701-deepseek-mini-research-tool.hf.space/ rather than on the huggingface.co page. Each account is limited to 10 research runs per hour; email the same address if you need more.
 
 Pick a profile when you start a chat:
 
@@ -68,7 +72,7 @@ The Space also exposes JSON endpoints for scripts and other services. They need 
 `provider` is optional (`deepseek`, `sarvam` or `groq`) and defaults to the server's setting.
 
 ```bash
-curl -X POST https://<your-space-url>/api/concise \
+curl -X POST https://aditya0701-deepseek-mini-research-tool.hf.space/api/concise \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $CONCISE_API_KEY" \
   -d '{"question": "What does CAGR stand for?"}'

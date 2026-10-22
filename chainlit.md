@@ -11,7 +11,9 @@ are flagged inline rather than silently kept or dropped.
 
 **Access** — this tool is login-protected because every run uses the owner's
 API quota. Need an account, or hit the hourly run limit? Email
-**adiman64@gmail.com**.
+**adiman64@gmail.com**. Always log in at
+https://aditya0701-deepseek-mini-research-tool.hf.space/ — the embedded view
+on huggingface.co blocks the login cookie.
 
 **Four modes, in the sidebar:**
 - **Ask a question** — pose any research question directly and get the full
@@ -34,7 +36,7 @@ then the article body.
 **Live reasoning panel** — watch each search, fetch, and thinking step stream
 in as it happens, not just the final report.
 
-**LLM backend** — switch between providers (DeepSeek / Sarvam) from the
+**LLM backend** — switch between providers (DeepSeek / Sarvam / Groq) from the
 settings panel (⚙️) at any time; the response tells you which backend and
 model actually answered.
 
